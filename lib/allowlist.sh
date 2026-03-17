@@ -205,7 +205,10 @@ _allowlist_reset_inner() {
 # Count the number of domains in a policy file.
 _count_domains() {
     local file="$1"
-    [ -f "$file" ] || { echo "0"; return; }
+    [ -f "$file" ] || {
+        echo "0"
+        return
+    }
     if command -v python3 &>/dev/null && python3 -c "import yaml" 2>/dev/null; then
         python3 -c "
 import yaml, sys

@@ -186,8 +186,8 @@ ENVEOF
     else
         # Validate permissions on existing secrets file.
         local perms
-        perms="$(stat -f '%Lp' "${DEVBOX_DATA}/secrets/.env" 2>/dev/null \
-            || stat -c '%a' "${DEVBOX_DATA}/secrets/.env" 2>/dev/null)"
+        perms="$(stat -c '%a' "${DEVBOX_DATA}/secrets/.env" 2>/dev/null \
+            || stat -f '%Lp' "${DEVBOX_DATA}/secrets/.env" 2>/dev/null)"
         case "$perms" in
             600 | 400) ;;
             *)
@@ -403,7 +403,8 @@ cmd_profile() {
     if ! exec_output="$(docker compose -p "$project" exec \
         -e PROFILE_VARIANT="$variant" \
         agent gosu devbox bash -c 'source "/usr/local/lib/devbox/profiles/$1.sh"' _ "$name" 2>&1)"; then
-        kill $spinner_pid 2>/dev/null; wait $spinner_pid 2>/dev/null
+        kill $spinner_pid 2>/dev/null
+        wait $spinner_pid 2>/dev/null
         trap - RETURN
         printf "\r"
         ui_error "Profile '$name' installation failed."
@@ -414,7 +415,8 @@ cmd_profile() {
         return 1
     fi
 
-    kill $spinner_pid 2>/dev/null; wait $spinner_pid 2>/dev/null
+    kill $spinner_pid 2>/dev/null
+    wait $spinner_pid 2>/dev/null
     trap - RETURN
     printf "\r"
     ui_info "Profile '$name' installed successfully."
@@ -481,7 +483,7 @@ cmd_logs() {
     else
         # Verify the container is running (we'll query inside it).
         _require_single_project >/dev/null || return 1
-        db="/data/api.db"  # container-side path, used in query string only
+        db="/data/api.db" # container-side path, used in query string only
     fi
 
     # Parse --since and --until from args.

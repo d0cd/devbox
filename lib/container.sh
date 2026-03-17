@@ -204,7 +204,8 @@ container_start() {
                     | grep -o '"State":"[^"]*"' | head -1 | sed 's/"State":"//;s/"//' || true)"
             fi
             if [ "$container_status" = "exited" ] || [ "$container_status" = "dead" ]; then
-                kill $spinner_pid 2>/dev/null; wait $spinner_pid 2>/dev/null
+                kill $spinner_pid 2>/dev/null
+                wait $spinner_pid 2>/dev/null
                 trap - RETURN
                 printf "\r"
                 ui_error "Container exited unexpectedly."
@@ -214,7 +215,8 @@ container_start() {
         fi
 
         if [ "$elapsed" -ge 60 ]; then
-            kill $spinner_pid 2>/dev/null; wait $spinner_pid 2>/dev/null
+            kill $spinner_pid 2>/dev/null
+            wait $spinner_pid 2>/dev/null
             trap - RETURN
             printf "\r"
             ui_error "Environment did not start within 60 seconds."
@@ -223,7 +225,8 @@ container_start() {
         fi
     done
 
-    kill $spinner_pid 2>/dev/null; wait $spinner_pid 2>/dev/null
+    kill $spinner_pid 2>/dev/null
+    wait $spinner_pid 2>/dev/null
     trap - RETURN
     printf "\r"
     ui_info "Environment ready."

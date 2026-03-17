@@ -12,15 +12,28 @@ BIN_DIR="${HOME}/.local/bin"
 
 # Minimal UI helpers for the installer (standalone — cannot source lib/ui.sh).
 if [ -z "${NO_COLOR:-}" ] && [ -t 1 ] && command -v tput &>/dev/null; then
-    _RED="$(tput setaf 1)"; _GREEN="$(tput setaf 2)"; _YELLOW="$(tput setaf 3)"
-    _CYAN="$(tput setaf 6)"; _BOLD="$(tput bold)"; _RESET="$(tput sgr0)"
+    _RED="$(tput setaf 1)"
+    _GREEN="$(tput setaf 2)"
+    _YELLOW="$(tput setaf 3)"
+    _CYAN="$(tput setaf 6)"
+    _BOLD="$(tput bold)"
+    _RESET="$(tput sgr0)"
 else
-    _RED=""; _GREEN=""; _YELLOW=""; _CYAN=""; _BOLD=""; _RESET=""
+    _RED=""
+    _GREEN=""
+    _YELLOW=""
+    _CYAN=""
+    _BOLD=""
+    _RESET=""
 fi
-ui_header() { echo ""; echo "${_BOLD}${_CYAN}=== $* ===${_RESET}"; echo ""; }
-ui_info()   { echo "${_GREEN}[info]${_RESET} $*"; }
-ui_warn()   { echo "${_YELLOW}[warn]${_RESET} $*" >&2; }
-ui_error()  { echo "${_RED}[error]${_RESET} $*" >&2; }
+ui_header() {
+    echo ""
+    echo "${_BOLD}${_CYAN}=== $* ===${_RESET}"
+    echo ""
+}
+ui_info() { echo "${_GREEN}[info]${_RESET} $*"; }
+ui_warn() { echo "${_YELLOW}[warn]${_RESET} $*" >&2; }
+ui_error() { echo "${_RED}[error]${_RESET} $*" >&2; }
 
 ui_header "devbox installer"
 

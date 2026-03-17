@@ -143,10 +143,10 @@ _overlay_private() {
     cp -r "$src"/* "$dest/" 2>/dev/null || true
 }
 
-_overlay_private /devbox/.private/claude   "${DEVBOX_HOME}/.claude"
+_overlay_private /devbox/.private/claude "${DEVBOX_HOME}/.claude"
 _overlay_private /devbox/.private/opencode "${DEVBOX_HOME}/.config/opencode"
-_overlay_private /devbox/.private/nvim     "${DEVBOX_HOME}/.config/nvim"
-_overlay_private /devbox/.private/tmux     "${DEVBOX_HOME}/.config/tmux"
+_overlay_private /devbox/.private/nvim "${DEVBOX_HOME}/.config/nvim"
+_overlay_private /devbox/.private/tmux "${DEVBOX_HOME}/.config/tmux"
 
 # Tmux: if private config provides tmux.conf, symlink it to ~/.tmux.conf
 # (tmux reads ~/.tmux.conf or ~/.config/tmux/tmux.conf depending on version).

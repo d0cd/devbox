@@ -45,7 +45,7 @@ teardown() {
     # Create a fake docker that passes info but fails compose.
     local tmpbin
     tmpbin="$(mktemp -d)"
-    cat > "${tmpbin}/docker" <<'SCRIPT'
+    cat >"${tmpbin}/docker" <<'SCRIPT'
 #!/bin/bash
 if [[ "$1" == "info" ]]; then exit 0; fi
 exit 1
@@ -151,8 +151,9 @@ SCRIPT
     ensure_global_dirs
     [ -d "${DEVBOX_DATA}/secrets" ]
     # Check permissions (should be 700 on the secrets dir).
+    # Linux stat -c, macOS stat -f (try Linux first — macOS stat -f is different).
     local perms
-    perms="$(stat -f '%Lp' "${DEVBOX_DATA}/secrets" 2>/dev/null || stat -c '%a' "${DEVBOX_DATA}/secrets" 2>/dev/null)"
+    perms="$(stat -c '%a' "${DEVBOX_DATA}/secrets" 2>/dev/null || stat -f '%Lp' "${DEVBOX_DATA}/secrets" 2>/dev/null)"
     [ "$perms" = "700" ]
 }
 
@@ -161,7 +162,7 @@ SCRIPT
 @test "ensure_global_dirs warns on loose secrets permissions" {
     # Create a .env file with overly permissive permissions.
     mkdir -p "${DEVBOX_DATA}/secrets"
-    echo "# test" > "${DEVBOX_DATA}/secrets/.env"
+    echo "# test" >"${DEVBOX_DATA}/secrets/.env"
     chmod 644 "${DEVBOX_DATA}/secrets/.env"
 
     run bash -c "
@@ -169,8 +170,8 @@ SCRIPT
         export NO_COLOR=1
         source '${DEVBOX_ROOT}/lib/ui.sh'
         # The file already exists, so we only test the else branch.
-        perms=\"\$(stat -f '%Lp' '${DEVBOX_DATA}/secrets/.env' 2>/dev/null \
-            || stat -c '%a' '${DEVBOX_DATA}/secrets/.env' 2>/dev/null)\"
+        perms=\"\$(stat -c '%a' '${DEVBOX_DATA}/secrets/.env' 2>/dev/null \
+            || stat -f '%Lp' '${DEVBOX_DATA}/secrets/.env' 2>/dev/null)\"
         case \"\$perms\" in
             600 | 400) ;;
             *)

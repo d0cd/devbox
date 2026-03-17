@@ -299,6 +299,38 @@ SCRIPT
 
 # --- cmd_clean safety ---
 
+# --- cmd_resize validation ---
+
+@test "cmd_resize rejects missing arguments" {
+    source "${DEVBOX_ROOT}/lib/commands.sh"
+    run cmd_resize ""
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Usage: devbox resize"* ]]
+}
+
+@test "cmd_resize rejects invalid memory format" {
+    source "${DEVBOX_ROOT}/lib/commands.sh"
+    run cmd_resize "lots"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Invalid memory"* ]]
+}
+
+@test "cmd_resize rejects invalid CPU format" {
+    source "${DEVBOX_ROOT}/lib/commands.sh"
+    run cmd_resize "8G" "many"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Invalid CPU"* ]]
+}
+
+@test "devbox help includes resize command" {
+    [ -z "$BASH5" ] && skip "bash 4+ not found"
+    run "$BASH5" "${DEVBOX_ROOT}/devbox" help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"resize"* ]]
+}
+
+# --- cmd_clean safety ---
+
 @test "cmd_clean refuses to delete when DEVBOX_DATA is root" {
     run bash -c "
         export DEVBOX_DATA='/'

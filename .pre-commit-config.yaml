@@ -39,6 +39,8 @@ repos:
       - id: mypy
         name: mypy
         entry: mypy --ignore-missing-imports --disallow-untyped-defs --warn-return-any
-        language: system
+        language: python
+        language_version: python3.12
+        additional_dependencies: ["mypy", "types-PyYAML"]
         types: [python]
         files: ^proxy/

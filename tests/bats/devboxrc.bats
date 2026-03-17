@@ -136,6 +136,66 @@ teardown() {
     rm -rf "$tmpdir"
 }
 
+@test "load_devboxrc accepts valid memory value" {
+    local tmpdir
+    tmpdir="$(mktemp -d)"
+    echo "DEVBOX_MEMORY=12G" >"${tmpdir}/.devboxrc"
+    unset DEVBOX_MEMORY
+    _load_devboxrc "$tmpdir"
+    [ "$DEVBOX_MEMORY" = "12G" ]
+    rm -rf "$tmpdir"
+}
+
+@test "load_devboxrc accepts memory in megabytes" {
+    local tmpdir
+    tmpdir="$(mktemp -d)"
+    echo "DEVBOX_MEMORY=512M" >"${tmpdir}/.devboxrc"
+    unset DEVBOX_MEMORY
+    _load_devboxrc "$tmpdir"
+    [ "$DEVBOX_MEMORY" = "512M" ]
+    rm -rf "$tmpdir"
+}
+
+@test "load_devboxrc rejects invalid memory value" {
+    local tmpdir
+    tmpdir="$(mktemp -d)"
+    echo "DEVBOX_MEMORY=lots" >"${tmpdir}/.devboxrc"
+    unset DEVBOX_MEMORY
+    _load_devboxrc "$tmpdir"
+    [ -z "${DEVBOX_MEMORY:-}" ]
+    rm -rf "$tmpdir"
+}
+
+@test "load_devboxrc accepts valid CPU value" {
+    local tmpdir
+    tmpdir="$(mktemp -d)"
+    echo "DEVBOX_CPUS=4.0" >"${tmpdir}/.devboxrc"
+    unset DEVBOX_CPUS
+    _load_devboxrc "$tmpdir"
+    [ "$DEVBOX_CPUS" = "4.0" ]
+    rm -rf "$tmpdir"
+}
+
+@test "load_devboxrc accepts integer CPU value" {
+    local tmpdir
+    tmpdir="$(mktemp -d)"
+    echo "DEVBOX_CPUS=2" >"${tmpdir}/.devboxrc"
+    unset DEVBOX_CPUS
+    _load_devboxrc "$tmpdir"
+    [ "$DEVBOX_CPUS" = "2" ]
+    rm -rf "$tmpdir"
+}
+
+@test "load_devboxrc rejects invalid CPU value" {
+    local tmpdir
+    tmpdir="$(mktemp -d)"
+    echo "DEVBOX_CPUS=many" >"${tmpdir}/.devboxrc"
+    unset DEVBOX_CPUS
+    _load_devboxrc "$tmpdir"
+    [ -z "${DEVBOX_CPUS:-}" ]
+    rm -rf "$tmpdir"
+}
+
 @test "load_devboxrc rejects invalid syntax lines" {
     local tmpdir
     tmpdir="$(mktemp -d)"

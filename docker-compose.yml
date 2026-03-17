@@ -51,8 +51,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 8G
-          cpus: '4.0'
+          memory: ${DEVBOX_MEMORY:-8G}
+          cpus: ${DEVBOX_CPUS:-4.0}
     stdin_open: true
     tty: true
     restart: unless-stopped

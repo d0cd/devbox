@@ -26,7 +26,9 @@ class TestOpenCodeConfig:
         has_provider = bool(keys & {"provider", "providers"})
         has_other = bool(keys & {"model", "mcpServers", "agents", "skills"})
         assert has_provider, f"opencode.json missing provider config, got: {list(keys)}"
-        assert has_other, f"opencode.json missing model/mcpServers config, got: {list(keys)}"
+        assert (
+            has_other
+        ), f"opencode.json missing model/mcpServers config, got: {list(keys)}"
 
 
 class TestPolicyTemplate:

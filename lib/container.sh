@@ -133,6 +133,9 @@ container_start() {
     export DEVBOX_SECRETS_FILE="${DEVBOX_DATA}/secrets/.env"
     export DEVBOX_PROJECT_SECRETS_FILE="${project_dir}/secrets/.env"
     export DEVBOX_CONFIG
+    # Resource limits (defaults in docker-compose.yml: 8G / 4 CPUs).
+    export DEVBOX_MEMORY="${DEVBOX_MEMORY:-8G}"
+    export DEVBOX_CPUS="${DEVBOX_CPUS:-4.0}"
 
     # Validate secrets file early — fail fast before touching Docker.
     # Users can bypass with DEVBOX_NO_SECRETS=1 for non-AI workflows.
@@ -268,6 +271,36 @@ container_status() {
             echo "  ${project}"
             echo "    Path:  ${path_label}"
             echo "    Shell: devbox shell"
+
+            # Show resource usage and warnings for the agent container.
+            _container_resource_warnings "$project"
         done <<<"$projects"
+    fi
+}
+
+# Check resource usage for a running project and warn if near limits.
+_container_resource_warnings() {
+    local project="$1"
+    local stats
+    stats="$(docker compose -p "$project" ps -q agent 2>/dev/null)" || return 0
+    [ -z "$stats" ] && return 0
+
+    local container_id="$stats"
+    local usage
+    usage="$(docker stats --no-stream --format '{{.MemUsage}}|{{.MemPerc}}|{{.BlockIO}}' "$container_id" 2>/dev/null)" || return 0
+    [ -z "$usage" ] && return 0
+
+    local mem_usage mem_pct block_io
+    mem_usage="$(echo "$usage" | cut -d'|' -f1 | xargs)"
+    mem_pct="$(echo "$usage" | cut -d'|' -f2 | tr -d '% ' | cut -d'.' -f1)"
+    block_io="$(echo "$usage" | cut -d'|' -f3 | xargs)"
+
+    echo "    Memory: ${mem_usage} (${mem_pct}%)"
+    echo "    Disk:   ${block_io}"
+
+    # Warn at 80% memory usage.
+    if [ -n "$mem_pct" ] && [ "$mem_pct" -ge 80 ] 2>/dev/null; then
+        ui_warn "Agent is using ${mem_pct}% of its memory limit."
+        ui_warn "Increase with: DEVBOX_MEMORY=12G devbox  (or set in .devboxrc)"
     fi
 }

@@ -17,7 +17,7 @@ _load_devboxrc() {
     local rc_file="${1:-.}/.devboxrc"
     [ -f "$rc_file" ] || return 0
 
-    local allowed_vars="DEVBOX_BRIDGE_SUBNET DEVBOX_RELOAD_INTERVAL DEVBOX_PRIVATE_CONFIGS"
+    local allowed_vars="DEVBOX_BRIDGE_SUBNET DEVBOX_RELOAD_INTERVAL DEVBOX_PRIVATE_CONFIGS DEVBOX_MEMORY DEVBOX_CPUS"
     local line_num=0
     while IFS= read -r line || [ -n "$line" ]; do
         line_num=$((line_num + 1))
@@ -64,6 +64,20 @@ _load_devboxrc() {
                 local expanded_value="${value/#\~/$HOME}"
                 if [[ ! "$value" =~ ^(https?://|git@|ssh://) ]] && [ ! -d "$expanded_value" ]; then
                     ui_warn ".devboxrc:${line_num}: '${key}' must be a git URL or existing directory, skipping"
+                    continue
+                fi
+                ;;
+            DEVBOX_MEMORY)
+                # Docker memory notation: number + unit suffix (e.g., 4G, 512M).
+                if [[ ! "$value" =~ ^[0-9]+[MmGg]$ ]]; then
+                    ui_warn ".devboxrc:${line_num}: '${key}' must be a Docker memory value (e.g., 4G, 512M), skipping"
+                    continue
+                fi
+                ;;
+            DEVBOX_CPUS)
+                # Decimal CPU count (e.g., 2, 4.0, 0.5).
+                if [[ ! "$value" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+                    ui_warn ".devboxrc:${line_num}: '${key}' must be a CPU count (e.g., 2, 4.0), skipping"
                     continue
                 fi
                 ;;
@@ -580,6 +594,74 @@ cmd_clean() {
     esac
 }
 
+cmd_resize() {
+    local memory="${1:-}"
+    local cpus="${2:-}"
+
+    if [ -z "$memory" ]; then
+        ui_error "Usage: devbox resize <memory> [cpus]"
+        ui_info "Examples:"
+        ui_info "  devbox resize 12G       # 12 GB RAM, keep current CPUs"
+        ui_info "  devbox resize 16G 8     # 16 GB RAM, 8 CPUs"
+        ui_info "  devbox resize 4G 2      # 4 GB RAM, 2 CPUs"
+        return 1
+    fi
+
+    # Validate memory format.
+    if [[ ! "$memory" =~ ^[0-9]+[MmGg]$ ]]; then
+        ui_error "Invalid memory value: '$memory' (use e.g., 4G, 512M)"
+        return 1
+    fi
+
+    # Validate CPU format if provided.
+    if [ -n "$cpus" ] && [[ ! "$cpus" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        ui_error "Invalid CPU value: '$cpus' (use e.g., 2, 4.0)"
+        return 1
+    fi
+
+    export DEVBOX_MEMORY="$memory"
+    # Preserve existing DEVBOX_CPUS if no CPU arg provided.
+    if [ -n "$cpus" ]; then
+        export DEVBOX_CPUS="$cpus"
+    else
+        export DEVBOX_CPUS="${DEVBOX_CPUS:-4.0}"
+    fi
+
+    local project
+    project="$(_require_single_project)" || return 1
+    local hash="${project#devbox-}"
+
+    local cpus_label="$DEVBOX_CPUS"
+    ui_info "Resizing to ${memory} RAM, ${cpus_label} CPUs..."
+    ui_info "This restarts the container. Workspace and history are preserved."
+
+    if ! ui_confirm "Restart with new resource limits?"; then
+        ui_info "Cancelled."
+        return 0
+    fi
+
+    # Re-export all compose variables so the stack can restart.
+    local project_path=""
+    if [ -f "${DEVBOX_DATA}/${hash}/.project_path" ]; then
+        project_path="$(cat "${DEVBOX_DATA}/${hash}/.project_path")"
+    fi
+
+    export PROJECT_PATH="${project_path:-.}"
+    export PROJECT_HASH="$hash"
+    local project_dir="${DEVBOX_DATA}/${hash}"
+    export DEVBOX_POLICY_FILE="${project_dir}/policy.yml"
+    export DEVBOX_LOG_DIR="${project_dir}/logs"
+    export DEVBOX_MEMORY_DIR="${project_dir}/memory"
+    export DEVBOX_HISTORY_DIR="${project_dir}/history"
+    export DEVBOX_SECRETS_FILE="${DEVBOX_DATA}/secrets/.env"
+    export DEVBOX_PROJECT_SECRETS_FILE="${project_dir}/secrets/.env"
+    export DEVBOX_CONFIG
+
+    docker compose -f "${DEVBOX_ROOT}/docker-compose.yml" \
+        -p "$project" up -d --force-recreate agent
+    ui_info "Resized. Run 'devbox shell' to reconnect."
+}
+
 cmd_rebuild() {
     if ! ui_confirm "Rebuild devbox images? This may take a few minutes."; then
         ui_info "Cancelled."
@@ -670,6 +752,8 @@ USAGE:
   devbox logs --hosts      Show request counts grouped by host
   devbox logs --since T    Filter to requests after timestamp T
   devbox logs --until T    Filter to requests before timestamp T
+  devbox resize 12G        Resize agent to 12 GB RAM (restarts container)
+  devbox resize 16G 8      Resize to 16 GB RAM and 8 CPUs
   devbox clean             Clean this project's data
   devbox clean --all       Clean all devbox data
   devbox rebuild           Rebuild container images
@@ -693,6 +777,8 @@ CONFIGURATION:
   Place a .devboxrc file in your project directory to set defaults:
     DEVBOX_BRIDGE_SUBNET=172.18.0.0/16
     DEVBOX_RELOAD_INTERVAL=30
+    DEVBOX_MEMORY=12G
+    DEVBOX_CPUS=6
     DEVBOX_PRIVATE_CONFIGS=git@github.com:you/devbox-private.git
   Environment variables take precedence over .devboxrc values.
 
@@ -710,6 +796,8 @@ ENVIRONMENT:
   DEVBOX_NO_SECRETS        Set to 1 to start without API keys configured
   DEVBOX_DATA              Data directory (default: ~/.devbox)
   DEVBOX_CONFIG            Config directory (default: ~/.config/devbox)
+  DEVBOX_MEMORY            Agent container memory limit (default: 8G)
+  DEVBOX_CPUS              Agent container CPU limit (default: 4.0)
   DEVBOX_BRIDGE_SUBNET     Override Docker bridge subnet for firewall rules
   DEVBOX_RELOAD_INTERVAL   Policy reload interval in seconds (default: 30)
   DEVBOX_PRIVATE_CONFIGS   Git URL or local path for private config overlay

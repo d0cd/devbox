@@ -42,13 +42,11 @@ Network isolation: `sandbox` network is `internal: true` (agent only), proxy has
 
 Always run these before `git push` to avoid CI failures:
 ```bash
-shellcheck -e SC1091,SC2015,SC2016,SC2034,SC2119,SC2120,SC2155,SC2317,SC2329 \
-  devbox main.sh entrypoint.sh lib/*.sh tooling/profiles/*.sh \
-  tooling/completions.bash proxy/entrypoint.sh \
-  tests/bats/test_helper.bash tests/integration/*.sh
-bats tests/bats/
+make ci        # runs lint + all tests (mirrors CI exactly)
+make lint      # pre-commit only
+make test      # bats + pytest only
 ```
-**shfmt**: CI uses v3.10.0. Do NOT use a local shfmt unless it is exactly v3.10.0 — newer versions produce different output. Use `pre-commit run shfmt --all-files` instead, which pins the correct version.
+`.pre-commit-config.yaml` is the single source of truth for all linter versions. CI runs `pre-commit run --all-files` — no independent tool installs.
 
 ## Security Rules
 

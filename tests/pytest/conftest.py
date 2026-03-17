@@ -40,7 +40,9 @@ def mock_flow():
     flow.response = MagicMock()
     flow.response.status_code = 200
     flow.response.headers = {"content-type": "application/json"}
-    flow.response.get_content.return_value = b'{"usage": {"input_tokens": 100, "output_tokens": 50}}'
+    flow.response.get_content.return_value = (
+        b'{"usage": {"input_tokens": 100, "output_tokens": 50}}'
+    )
     flow.metadata = {}
     return flow
 
@@ -50,6 +52,6 @@ def temp_policy(tmp_path):
     """Create a temporary policy file."""
     policy = tmp_path / "policy.yml"
     policy.write_text(
-        "version: 1\nallowed:\n  - api.anthropic.com\n  - \"*.openai.com\"\n"
+        'version: 1\nallowed:\n  - api.anthropic.com\n  - "*.openai.com"\n'
     )
     return policy

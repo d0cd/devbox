@@ -17,6 +17,7 @@ _devbox() {
         'secrets:Manage API keys and secrets'
         'logs:Show recent API calls'
         'clean:Clean project data'
+        'resize:Resize agent container resources'
         'rebuild:Rebuild container images'
         'update:Pull latest source and rebuild'
         'completions:Output shell completions'
@@ -64,7 +65,7 @@ _devbox() {
             return
             ;;
         logs)
-            logs_opts=('--errors:Show recent 4xx/5xx responses' '--blocked:Show requests blocked by enforcer' '--slow:Show requests slower than 5s' '--hosts:Show request counts by host')
+            logs_opts=('--errors:Show recent 4xx/5xx responses' '--blocked:Show requests blocked by enforcer' '--slow:Show requests slower than 5s' '--hosts:Show request counts by host' '--since:Filter to requests after timestamp' '--until:Filter to requests before timestamp')
             _describe 'option' logs_opts
             return
             ;;

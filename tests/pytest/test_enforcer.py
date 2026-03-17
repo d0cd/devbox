@@ -1,13 +1,9 @@
 """Tests for proxy/enforcer.py."""
 
 import time
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from enforcer import (
-    BLOCKED_BODY_PREFIX,
-    BLOCKED_BODY_SUFFIX,
-    POLICY_PATH,
     Enforcer,
     _is_allowed,
     _load_allowlist,
@@ -137,13 +133,10 @@ class TestEnforcerClass:
         policy = tmp_path / "policy.yml"
         if domains is None:
             domains = ["api.anthropic.com", "*.openai.com"]
-        yaml_content = "allowed:\n" + "".join(
-            f"  - '{d}'\n" for d in domains
-        )
+        yaml_content = "allowed:\n" + "".join(f"  - '{d}'\n" for d in domains)
         policy.write_text(yaml_content)
         enforcer = Enforcer()
-        with patch("enforcer.POLICY_PATH", policy), \
-             patch("enforcer.ctx") as mock_ctx:
+        with patch("enforcer.POLICY_PATH", policy), patch("enforcer.ctx") as _mock_ctx:
             enforcer._reload_policy()
         return enforcer
 
@@ -204,15 +197,13 @@ class TestEnforcerClass:
         policy = tmp_path / "policy.yml"
         policy.write_text("allowed:\n  - good.com\n")
         enforcer = Enforcer()
-        with patch("enforcer.POLICY_PATH", policy), \
-             patch("enforcer.ctx"):
+        with patch("enforcer.POLICY_PATH", policy), patch("enforcer.ctx"):
             enforcer._reload_policy()
             assert "good.com" in enforcer.allowlist
             # Force reload check by setting last_check far in the past.
             enforcer._last_check = time.monotonic() - 60
         # Now make stat fail during _maybe_reload's mtime check.
-        with patch("enforcer.POLICY_PATH") as mock_path, \
-             patch("enforcer.ctx"):
+        with patch("enforcer.POLICY_PATH") as mock_path, patch("enforcer.ctx"):
             mock_path.exists.return_value = True
             mock_path.stat.side_effect = OSError("permission denied")
             # Should not raise — just log error and keep existing allowlist.
@@ -223,8 +214,7 @@ class TestEnforcerClass:
         policy = tmp_path / "policy.yml"
         policy.write_text("allowed:\n  - old.com\n")
         enforcer = Enforcer()
-        with patch("enforcer.POLICY_PATH", policy), \
-             patch("enforcer.ctx"):
+        with patch("enforcer.POLICY_PATH", policy), patch("enforcer.ctx"):
             enforcer._reload_policy()
             assert "old.com" in enforcer.allowlist
 

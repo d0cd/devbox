@@ -8,77 +8,15 @@ on:
     branches: [main]
 
 jobs:
-  lint-docker:
-    name: Lint Dockerfiles
+  lint:
+    name: Lint (pre-commit)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: hadolint/hadolint-action@v3.1.0
+      - uses: actions/setup-python@v5
         with:
-          dockerfile: Dockerfile
-      - uses: hadolint/hadolint-action@v3.1.0
-        with:
-          dockerfile: proxy/Dockerfile
-
-  lint-shell:
-    name: Lint shell scripts
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install shellcheck
-        run: sudo apt-get install -y shellcheck
-      - name: Run shellcheck
-        # SC1091: Can't follow sourced files (lib/*.sh loaded at runtime)
-        # SC2015: A && B || C pattern (intentional fire-and-forget)
-        # SC2016: Single-quoted strings with $ (intentional in heredocs/awk)
-        # SC2034: Unused loop variable (used for iteration count only)
-        # SC2119/SC2120: Functions with optional args called without args
-        # SC2155: Declare and assign separately (acceptable in test helpers)
-        # SC2317: Unreachable code (false positive for functions defined inside BATS helpers)
-        # SC2329: Function never invoked (stub functions called indirectly via BATS)
-        run: |
-          shellcheck -e SC1091,SC2015,SC2016,SC2034,SC2119,SC2120,SC2155,SC2317,SC2329 devbox main.sh entrypoint.sh \
-            lib/commands.sh lib/container.sh lib/ui.sh lib/profile.sh lib/allowlist.sh lib/firewall.sh lib/secrets.sh \
-            tooling/profiles/*.sh tooling/completions.bash \
-            proxy/entrypoint.sh \
-            tests/bats/test_helper.bash tests/integration/*.sh
-
-  fmt-shell:
-    name: Check shell formatting
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install shfmt
-        env:
-          SHFMT_VERSION: "3.10.0"
-          SHFMT_SHA256: "1f57a384d59542f8fac5f503da1f3ea44242f46dff969569e80b524d64b71dbc"
-        run: |
-          curl -fsSL -o /tmp/shfmt "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64"
-          echo "${SHFMT_SHA256}  /tmp/shfmt" | sha256sum -c -
-          chmod +x /tmp/shfmt
-          sudo mv /tmp/shfmt /usr/local/bin/shfmt
-      - name: Run shfmt
-        run: |
-          shfmt -i 4 -ci -bn -d \
-            devbox main.sh entrypoint.sh \
-            lib/commands.sh lib/container.sh lib/ui.sh lib/profile.sh lib/allowlist.sh lib/firewall.sh lib/secrets.sh \
-            tests/bats/test_helper.bash tests/integration/*.sh \
-            tooling/profiles/*.sh tooling/completions.bash \
-            proxy/entrypoint.sh
-
-  lint-python:
-    name: Lint Python
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
-      - name: Run ruff
-        run: |
-          uvx ruff check proxy/
-          uvx ruff format --check proxy/
-      - name: Run mypy
-        run: |
-          uvx --with types-PyYAML mypy --ignore-missing-imports --disallow-untyped-defs --warn-return-any proxy/*.py
+          python-version: "3.12"
+      - uses: pre-commit/action@v3.0.1
 
   test-shell:
     name: Test shell scripts
@@ -116,7 +54,7 @@ jobs:
   build-images:
     name: Build container images
     runs-on: ubuntu-latest
-    needs: [lint-docker, lint-shell, fmt-shell, lint-python, test-shell, test-python]
+    needs: [lint, test-shell, test-python]
     steps:
       - uses: actions/checkout@v4
 

@@ -92,6 +92,8 @@ devbox logs --errors       # Show recent 4xx/5xx responses
 devbox logs --blocked      # Show requests blocked by enforcer
 devbox logs --slow         # Show requests slower than 5 seconds
 devbox logs --hosts        # Show request counts by host
+devbox resize 12G          # Resize to 12 GB RAM (restarts container)
+devbox resize 16G 8        # Resize to 16 GB RAM and 8 CPUs
 devbox clean               # Clean this project's data
 devbox clean --all         # Clean all devbox data
 devbox rebuild             # Rebuild container images
@@ -188,6 +190,28 @@ devbox rebuild          # only needed to re-cache nvim plugins
 | `opencode/` | `~/.config/opencode/` | merged with defaults |
 | `.zshrc` | `~/.zshrc` | replaces the default devbox zshrc |
 
+### Volume mounts
+
+All host-side data is stored under `~/.devbox/<project-hash>/` and mounted into the containers:
+
+| Host path | Container path | Purpose |
+|-----------|---------------|---------|
+| `~/projects/my-app/` | `/workspace` (rw) | Project source code |
+| `~/.config/devbox/` | `/devbox` (ro) | OpenCode config, private overlay |
+| `~/.devbox/<hash>/history/` | `/data/history` | Shell history (persists across restarts) |
+| `~/.devbox/<hash>/memory/` | `~/.opencode-mem/project` | OpenCode project memory |
+| `~/.devbox/<hash>/logs/` | `/data` (proxy) | API call logs (SQLite) |
+| `~/.devbox/<hash>/policy.yml` | `/proxy/policy.yml` (ro, proxy) | Network allowlist |
+| `~/.devbox/<hash>/secrets/.env` | env-file injection | Per-project secrets |
+| `~/.devbox/secrets/.env` | env-file injection | Global secrets |
+
+Docker-managed volumes (not on host filesystem):
+
+| Volume | Container path | Purpose |
+|--------|---------------|---------|
+| `proxy-ca` | `/usr/local/share/ca-certificates` (ro) | Shared mitmproxy CA certificate |
+| `devbox-shared-memory` | `~/.opencode-mem/shared` | Cross-project OpenCode memory |
+
 ## API Observability
 
 Every API call made through the proxy is logged to a SQLite database:
@@ -203,12 +227,29 @@ Every API call made through the proxy is logged to a SQLite database:
 Place a `.devboxrc` file in your project directory to set defaults:
 
 ```bash
+DEVBOX_MEMORY=12G
+DEVBOX_CPUS=6
 DEVBOX_BRIDGE_SUBNET=172.18.0.0/16
 DEVBOX_RELOAD_INTERVAL=15
 DEVBOX_PRIVATE_CONFIGS=git@github.com:you/devbox-private.git
 ```
 
 Environment variables take precedence over `.devboxrc` values. Only whitelisted variables are accepted.
+
+## Resource Tuning
+
+The agent container defaults to 8 GB RAM and 4 CPUs. Adjust per-project or globally:
+
+```bash
+# Per-project (in .devboxrc)
+DEVBOX_MEMORY=16G
+DEVBOX_CPUS=8
+
+# Or via environment variable for a single session
+DEVBOX_MEMORY=4G devbox
+```
+
+`devbox status` shows current memory usage and warns when the agent exceeds 80% of its limit.
 
 ## Security Model
 
@@ -246,7 +287,7 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the full architecture and honest threat
 | RAM | 8 GB | 16 GB |
 | Disk | 5 GB (images + workspace) | 10 GB+ |
 
-The agent container is allocated 8 GB RAM / 4 CPUs per `docker-compose.yml`.
+The agent container defaults to 8 GB RAM / 4 CPUs. Adjust with `DEVBOX_MEMORY` and `DEVBOX_CPUS` (see [Resource Tuning](#resource-tuning)).
 
 **Expected times:**
 - First build: 5–10 minutes (downloads base images + tools)

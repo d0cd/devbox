@@ -20,6 +20,7 @@
 #   devbox rebuild    # builds base + this overlay (cached)
 #   devbox            # starts container with your configs
 
+# hadolint ignore=DL3007
 FROM devbox-agent:latest
 
 # Copy configs into the image layer (cached until files change).

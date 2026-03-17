@@ -2,7 +2,6 @@
 
 import sqlite3
 import time
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from logger import Logger, _truncate, _prune, MAX_BODY_SIZE, TRUNCATION_MARKER
@@ -67,9 +66,7 @@ class TestSchema:
         assert row is not None
 
     def test_indexes_exist(self, temp_db):
-        cursor = temp_db.execute(
-            "SELECT name FROM sqlite_master WHERE type='index'"
-        )
+        cursor = temp_db.execute("SELECT name FROM sqlite_master WHERE type='index'")
         indexes = {row[0] for row in cursor.fetchall()}
         assert "idx_requests_timestamp" in indexes
         assert "idx_requests_host" in indexes
@@ -83,14 +80,18 @@ class TestLoggerClass:
         """Create a Logger with a temp database."""
         db_path = tmp_path / "test.db"
         logger_inst = Logger()
-        with patch("logger.DB_PATH", db_path), \
-             patch("logger.ctx"):
+        with patch("logger.DB_PATH", db_path), patch("logger.ctx"):
             logger_inst.load(None)
         return logger_inst, db_path
 
-    def _make_flow(self, host="api.anthropic.com", method="POST",
-                   status=200, req_body=b'{"model":"test"}',
-                   resp_body=b'{"ok":true}'):
+    def _make_flow(
+        self,
+        host="api.anthropic.com",
+        method="POST",
+        status=200,
+        req_body=b'{"model":"test"}',
+        resp_body=b'{"ok":true}',
+    ):
         flow = MagicMock()
         flow.request.method = method
         flow.request.pretty_url = f"https://{host}/v1/messages"

@@ -2,3 +2,9 @@
 # Add CVE IDs here to suppress false positives or accepted risks.
 # Each line should contain a single CVE ID (e.g., CVE-2024-12345).
 # Document the reason as a comment above each entry.
+
+# mitmproxy transitive dependencies — waiting on mitmproxy 12.3+ to bump these.
+# pyOpenSSL DTLS callback overflow — proxy only handles HTTP/HTTPS, no DTLS.
+CVE-2026-27459
+# tornado DoS via large multipart — proxy does not accept multipart uploads.
+CVE-2026-31958

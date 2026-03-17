@@ -144,6 +144,7 @@ class Enforcer:
                 self._blocked_body(host),
                 {"Content-Type": "text/plain"},
             )
+            flow.kill()
 
     def http_connect(self, flow: http.HTTPFlow) -> None:
         """Block HTTPS CONNECT tunnels to non-allowed domains."""
@@ -156,6 +157,7 @@ class Enforcer:
                 self._blocked_body(host),
                 {"Content-Type": "text/plain"},
             )
+            flow.kill()
 
 
 addons = [Enforcer()]

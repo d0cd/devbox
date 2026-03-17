@@ -15,12 +15,16 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     ca-certificates \
     curl \
     git \
-    nodejs \
-    npm \
     python3 \
     unzip \
     wget \
     zsh
+
+# Node.js 22 LTS (required by gemini-cli, codex — need >= 20).
+# hadolint ignore=DL3008
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs
 
 # uv (Python tooling) — COPY layers are very cacheable.
 COPY --from=ghcr.io/astral-sh/uv:0.10.10 /uv /usr/local/bin/uv
@@ -54,11 +58,17 @@ RUN git clone --depth=1 https://github.com/ohmyzsh/ohmyzsh.git /root/.oh-my-zsh 
 # --- Stage 2: Runtime ---
 FROM ubuntu:24.04@sha256:d1e2e92c075e5ca139d51a140fff46f84315c0fdce203eab2807c7e495eff4f9
 
-ARG DEVBOX_VERSION=0.2.0
+ARG DEVBOX_VERSION=0.3.0
 LABEL org.opencontainers.image.title="devbox-agent" \
       org.opencontainers.image.version="${DEVBOX_VERSION}"
 
 ENV DEBIAN_FRONTEND=noninteractive
+
+# Node.js 22 LTS (runtime needs node for npm global binaries).
+# hadolint ignore=DL3008
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs
 
 # Runtime-only system packages (curl kept for healthcheck).
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -75,8 +85,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     iptables \
     jq \
     neovim \
-    nodejs \
-    npm \
     python3 \
     sqlite3 \
     tmux \

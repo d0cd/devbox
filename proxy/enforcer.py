@@ -106,7 +106,7 @@ class Enforcer:
             if POLICY_PATH.exists():
                 self._policy_mtime = POLICY_PATH.stat().st_mtime
         except OSError as e:
-            ctx.log.error(f"Failed to stat policy file: {e}")
+            ctx.log.warn(f"Failed to stat policy file: {e}")
         self._last_check = time.monotonic()
         if self.allowlist != old_allowlist:
             ctx.log.info(
@@ -127,7 +127,7 @@ class Enforcer:
                     ctx.log.info("Policy file changed, reloading...")
                     self._reload_policy()
         except OSError as e:
-            ctx.log.error(f"Failed to check policy file: {e}")
+            ctx.log.warn(f"Failed to check policy file: {e}")
 
     def _blocked_body(self, host: str) -> bytes:
         """Generate a per-request blocked response body."""
@@ -138,7 +138,7 @@ class Enforcer:
         self._maybe_reload()
         host = flow.request.pretty_host
         if not _is_allowed(host, self.allowlist):
-            ctx.log.warning(f"BLOCKED request to {host}")
+            ctx.log.warn(f"BLOCKED request to {host}")
             flow.response = http.Response.make(
                 403,
                 self._blocked_body(host),
@@ -151,7 +151,7 @@ class Enforcer:
         self._maybe_reload()
         host = flow.request.pretty_host
         if not _is_allowed(host, self.allowlist):
-            ctx.log.warning(f"BLOCKED CONNECT tunnel to {host}")
+            ctx.log.warn(f"BLOCKED CONNECT tunnel to {host}")
             flow.response = http.Response.make(
                 403,
                 self._blocked_body(host),

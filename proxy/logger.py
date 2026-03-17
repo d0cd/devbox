@@ -168,7 +168,7 @@ class Logger:
                 if pruned > 0:
                     ctx.log.info(f"Pruned {pruned} old log rows")
         except (sqlite3.Error, UnicodeDecodeError) as e:
-            ctx.log.error(f"Failed to log request: {e}")
+            ctx.log.warn(f"Failed to log request: {e}")
 
     def done(self) -> None:
         """Close the database on shutdown."""

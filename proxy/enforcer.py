@@ -27,22 +27,23 @@ logger = logging.getLogger("enforcer")
 
 
 def _load_allowlist(path: Path) -> list[str]:
-    """Load allowed domains from a YAML policy file."""
-    if not path.exists():
-        logger.warning("Policy file not found at %s — blocking all traffic", path)
-        return []
+    """Load allowed domains from a YAML policy file.
 
+    Returns an empty list on any error (fail-closed — blocks all traffic).
+    """
     MAX_POLICY_SIZE = 1_048_576  # 1 MB
-    file_size = path.stat().st_size
-    if file_size > MAX_POLICY_SIZE:
-        logger.error("Policy file too large (%d bytes)", file_size)
-        return []
-
     try:
+        file_size = path.stat().st_size
+        if file_size > MAX_POLICY_SIZE:
+            logger.error("Policy file too large (%d bytes)", file_size)
+            return []
         with open(path, "r") as f:
             data = yaml.safe_load(f)
-    except yaml.YAMLError as e:
-        logger.error("Failed to parse policy file %s: %s", path, e)
+    except FileNotFoundError:
+        logger.warning("Policy file not found at %s — blocking all traffic", path)
+        return []
+    except (OSError, yaml.YAMLError) as e:
+        logger.error("Failed to read policy file %s: %s", path, e)
         return []
 
     if not isinstance(data, dict) or "allowed" not in data:

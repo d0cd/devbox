@@ -113,6 +113,15 @@ class TestLoadAllowlistEdgeCases:
         assert "*.foo.*.com" not in result
         assert "good.com" in result
 
+    def test_unreadable_file_returns_empty(self, tmp_path):
+        """OSError on open() should return empty list (fail-closed)."""
+        policy = tmp_path / "noperm.yml"
+        policy.write_text("allowed:\n  - good.com\n")
+        policy.chmod(0o000)
+        result = _load_allowlist(policy)
+        assert result == []
+        policy.chmod(0o644)  # Restore for cleanup.
+
     def test_numeric_entry_converted_to_string(self, tmp_path):
         policy = tmp_path / "num.yml"
         policy.write_text("allowed:\n  - 12345\n")

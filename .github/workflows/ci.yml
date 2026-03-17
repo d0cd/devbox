@@ -356,12 +356,7 @@ jobs:
 
           # Start only the proxy (agent needs NET_ADMIN for iptables).
           # Publish port 8080 for host-side testing (compose has no ports mapping).
-          cat > /tmp/compose-ci-override.yml <<'OVERRIDE'
-services:
-  proxy:
-    ports:
-      - "8080:8080"
-OVERRIDE
+          printf 'services:\n  proxy:\n    ports:\n      - "8080:8080"\n' > /tmp/compose-ci-override.yml
           docker compose -f docker-compose.yml -f /tmp/compose-ci-override.yml -p devbox-ci up -d proxy
 
           # Wait for proxy health check.

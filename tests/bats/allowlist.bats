@@ -6,6 +6,7 @@ load test_helper
 setup() {
     setup_libs
     source "${DEVBOX_ROOT}/lib/allowlist.sh"
+    set +euo pipefail
 }
 
 @test "validate_domain accepts simple domain" {

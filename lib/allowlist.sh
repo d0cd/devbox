@@ -202,25 +202,6 @@ _allowlist_reset_inner() {
     _reload_message
 }
 
-# Count the number of domains in a policy file.
-_count_domains() {
-    local file="$1"
-    [ -f "$file" ] || {
-        echo "0"
-        return
-    }
-    if command -v python3 &>/dev/null && python3 -c "import yaml" 2>/dev/null; then
-        python3 -c "
-import yaml, sys
-with open(sys.argv[1]) as f:
-    data = yaml.safe_load(f)
-print(len(data.get('allowed', [])))
-" "$file"
-    else
-        grep -c '^\s*- ' "$file" 2>/dev/null || echo "0"
-    fi
-}
-
 # Reset the allowlist to the default policy.
 allowlist_reset() {
     local policy_file="$1"
@@ -231,8 +212,8 @@ allowlist_reset() {
     fi
 
     local current_count default_count
-    current_count="$(_count_domains "$policy_file")"
-    default_count="$(_count_domains "${DEVBOX_ROOT}/templates/policy.yml")"
+    current_count="$(grep -c '^\s*- ' "$policy_file" 2>/dev/null || echo "0")"
+    default_count="$(grep -c '^\s*- ' "${DEVBOX_ROOT}/templates/policy.yml" 2>/dev/null || echo "0")"
     ui_info "Current allowlist: ${current_count} domains → Default: ${default_count} domains"
 
     if ! ui_confirm "Reset allowlist to defaults? This will overwrite your current policy."; then

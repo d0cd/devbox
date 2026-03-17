@@ -36,7 +36,8 @@ jobs:
           shellcheck -e SC1091,SC2015,SC2016,SC2119,SC2120 devbox main.sh entrypoint.sh \
             lib/commands.sh lib/container.sh lib/ui.sh lib/profile.sh lib/allowlist.sh lib/firewall.sh lib/secrets.sh \
             tooling/profiles/*.sh tooling/completions.bash \
-            proxy/entrypoint.sh
+            proxy/entrypoint.sh \
+            tests/bats/test_helper.bash tests/integration/*.sh
 
   fmt-shell:
     name: Check shell formatting
@@ -57,6 +58,7 @@ jobs:
           shfmt -i 4 -ci -bn -d \
             devbox main.sh entrypoint.sh \
             lib/commands.sh lib/container.sh lib/ui.sh lib/profile.sh lib/allowlist.sh lib/firewall.sh lib/secrets.sh \
+            tests/bats/test_helper.bash tests/integration/*.sh \
             tooling/profiles/*.sh tooling/completions.bash \
             proxy/entrypoint.sh
 
@@ -123,8 +125,8 @@ jobs:
           context: ./proxy
           load: true
           tags: devbox-proxy:ci
-          cache-from: type=gha,scope=proxy-v2
-          cache-to: type=gha,scope=proxy-v2,mode=max
+          cache-from: type=gha,scope=proxy
+          cache-to: type=gha,scope=proxy,mode=max
 
       - name: Build agent image
         uses: docker/build-push-action@v6
@@ -132,8 +134,8 @@ jobs:
           context: .
           load: true
           tags: devbox-agent:ci
-          cache-from: type=gha,scope=agent-v2
-          cache-to: type=gha,scope=agent-v2,mode=max
+          cache-from: type=gha,scope=agent
+          cache-to: type=gha,scope=agent,mode=max
 
       - name: Save images as artifacts
         run: |
@@ -160,7 +162,7 @@ jobs:
       - name: Load images
         run: gunzip -c /tmp/devbox-images.tar.gz | docker load
       - name: Scan proxy image
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: 'devbox-proxy:ci'
           severity: 'CRITICAL,HIGH'
@@ -169,7 +171,7 @@ jobs:
           scanners: 'vuln'
           trivyignores: '.trivyignore'
       - name: Scan agent image
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: 'devbox-agent:ci'
           severity: 'CRITICAL,HIGH'
@@ -273,6 +275,25 @@ jobs:
 
           docker stop devbox-proxy-test
           docker rm devbox-proxy-test
+
+  smoke-test-extended:
+    name: Extended smoke test (logger + wildcards)
+    runs-on: ubuntu-latest
+    needs: build-images
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download image artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: devbox-images
+          path: /tmp
+      - name: Load images
+        run: |
+          gunzip -c /tmp/devbox-images.tar.gz | docker load
+          docker tag devbox-proxy:ci devbox-proxy:latest
+          docker tag devbox-agent:ci devbox-agent:latest
+      - name: Run extended smoke test
+        run: bash tests/integration/smoke_extended.sh
 
   test-firewall-real:
     name: Real firewall test

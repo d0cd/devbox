@@ -67,34 +67,20 @@ main() {
             ;;
     esac
 
+    # Handle --help/-h for any subcommand by showing the main help.
+    if [ "${2:-}" = "--help" ] || [ "${2:-}" = "-h" ]; then
+        cmd_help
+        return 0
+    fi
+
     case "$cmd" in
         shell)
-            if [ "${2:-}" = "--help" ] || [ "${2:-}" = "-h" ]; then
-                echo "Usage: devbox shell"
-                echo ""
-                echo "Open an additional shell into the running devbox environment."
-                echo "The environment must already be started with 'devbox [project-path]'."
-                return 0
-            fi
             cmd_shell
             ;;
         stop)
-            if [ "${2:-}" = "--help" ] || [ "${2:-}" = "-h" ]; then
-                echo "Usage: devbox stop"
-                echo ""
-                echo "Stop the running container stack. Prompts for confirmation."
-                echo "If multiple sessions are running, you will be asked to select one."
-                return 0
-            fi
             cmd_stop
             ;;
         status)
-            if [ "${2:-}" = "--help" ] || [ "${2:-}" = "-h" ]; then
-                echo "Usage: devbox status"
-                echo ""
-                echo "Show all running devbox sessions with their project paths."
-                return 0
-            fi
             cmd_status
             ;;
         info)
@@ -124,6 +110,10 @@ main() {
         clean)
             shift
             cmd_clean "${1:-}"
+            ;;
+        resize)
+            shift
+            cmd_resize "${1:-}" "${2:-}"
             ;;
         rebuild)
             cmd_rebuild

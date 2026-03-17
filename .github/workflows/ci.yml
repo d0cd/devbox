@@ -123,8 +123,8 @@ jobs:
           context: ./proxy
           load: true
           tags: devbox-proxy:ci
-          cache-from: type=gha,scope=proxy
-          cache-to: type=gha,scope=proxy,mode=max
+          cache-from: type=gha,scope=proxy-v2
+          cache-to: type=gha,scope=proxy-v2,mode=max
 
       - name: Build agent image
         uses: docker/build-push-action@v6
@@ -132,8 +132,8 @@ jobs:
           context: .
           load: true
           tags: devbox-agent:ci
-          cache-from: type=gha,scope=agent
-          cache-to: type=gha,scope=agent,mode=max
+          cache-from: type=gha,scope=agent-v2
+          cache-to: type=gha,scope=agent-v2,mode=max
 
       - name: Save images as artifacts
         run: |
@@ -167,6 +167,7 @@ jobs:
           ignore-unfixed: true
           exit-code: '1'
           scanners: 'vuln'
+          trivyignores: '.trivyignore'
       - name: Scan agent image
         uses: aquasecurity/trivy-action@master
         with:
@@ -175,6 +176,7 @@ jobs:
           ignore-unfixed: true
           exit-code: '1'
           scanners: 'vuln'
+          trivyignores: '.trivyignore'
 
   smoke-test:
     name: Smoke test
@@ -325,6 +327,8 @@ jobs:
         run: |
           # Create required directories and files.
           mkdir -p /tmp/devbox-logs /tmp/devbox-memory /tmp/devbox-history /tmp/devbox-config/opencode
+          # Make log dir writable by proxy's devbox user (runs as non-root inside container).
+          chmod 777 /tmp/devbox-logs
           echo "# CI test secrets (no real keys)" > /tmp/devbox-secrets.env
           echo "# CI project secrets" > /tmp/devbox-project-secrets.env
           echo '{}' > /tmp/devbox-config/opencode/opencode.json

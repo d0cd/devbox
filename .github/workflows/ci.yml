@@ -160,7 +160,7 @@ jobs:
       - name: Load images
         run: gunzip -c /tmp/devbox-images.tar.gz | docker load
       - name: Scan proxy image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.31.0
         with:
           image-ref: 'devbox-proxy:ci'
           severity: 'CRITICAL,HIGH'
@@ -168,7 +168,7 @@ jobs:
           exit-code: '1'
           scanners: 'vuln'
       - name: Scan agent image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.31.0
         with:
           image-ref: 'devbox-agent:ci'
           severity: 'CRITICAL,HIGH'
@@ -217,7 +217,13 @@ jobs:
           fi
 
           # Test: allowed domain should not get 403 (may get other codes without credentials).
-          STATUS=$(curl -s -o /dev/null -w '%{http_code}' -x http://localhost:8080 http://api.anthropic.com/ || true)
+          # Retry with backoff — proxy may still be initializing CA cert after TCP socket is up.
+          STATUS="000"
+          for i in $(seq 1 10); do
+            STATUS=$(curl -s -o /dev/null -w '%{http_code}' -x http://localhost:8080 http://api.anthropic.com/ || true)
+            [ "$STATUS" != "000" ] && [ -n "$STATUS" ] && break
+            sleep 2
+          done
           echo "Allowed domain status: $STATUS"
           if [ -z "$STATUS" ] || [ "$STATUS" = "000" ]; then
             echo "FAIL: curl could not connect to proxy"
@@ -279,9 +285,10 @@ jobs:
       - name: Run firewall test inside container
         run: |
           docker run --rm --cap-add NET_ADMIN \
+            --entrypoint bash \
             -v "$PWD/lib:/usr/local/lib/devbox:ro" \
             -v "$PWD/tests:/tests:ro" \
-            devbox-agent:latest bash /tests/integration/firewall_real.sh
+            devbox-agent:latest /tests/integration/firewall_real.sh
 
   test-compose:
     name: Compose integration test
@@ -308,11 +315,13 @@ jobs:
           DEVBOX_MEMORY_DIR: /tmp/devbox-memory
           DEVBOX_HISTORY_DIR: /tmp/devbox-history
           DEVBOX_SECRETS_FILE: /tmp/devbox-secrets.env
+          DEVBOX_PROJECT_SECRETS_FILE: /tmp/devbox-project-secrets.env
           DEVBOX_CONFIG: /tmp/devbox-config
         run: |
           # Create required directories and files.
           mkdir -p /tmp/devbox-logs /tmp/devbox-memory /tmp/devbox-history /tmp/devbox-config/opencode
           echo "# CI test secrets (no real keys)" > /tmp/devbox-secrets.env
+          echo "# CI project secrets" > /tmp/devbox-project-secrets.env
           echo '{}' > /tmp/devbox-config/opencode/opencode.json
 
           # Start only the proxy (agent needs NET_ADMIN for iptables).

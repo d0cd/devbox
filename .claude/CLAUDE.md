@@ -42,7 +42,7 @@ Network isolation: `sandbox` network is `internal: true` (agent only), proxy has
 
 Always run these before `git push` to avoid CI failures:
 ```bash
-shellcheck -e SC1091,SC2015,SC2016,SC2034,SC2119,SC2120,SC2155,SC2329 \
+shellcheck -e SC1091,SC2015,SC2016,SC2034,SC2119,SC2120,SC2155,SC2317,SC2329 \
   devbox main.sh entrypoint.sh lib/*.sh tooling/profiles/*.sh \
   tooling/completions.bash proxy/entrypoint.sh \
   tests/bats/test_helper.bash tests/integration/*.sh

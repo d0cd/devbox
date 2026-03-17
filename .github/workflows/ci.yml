@@ -28,10 +28,12 @@ jobs:
       - name: Install shellcheck
         run: sudo apt-get install -y shellcheck
       - name: Run shellcheck
-        # SC1091: Can't follow sourced files (lib/*.sh loaded at runtime, not statically resolvable)
-        # SC2016: Single-quoted strings with $ (intentional — used in heredocs and awk scripts)
+        # SC1091: Can't follow sourced files (lib/*.sh loaded at runtime)
+        # SC2015: A && B || C pattern (intentional fire-and-forget)
+        # SC2016: Single-quoted strings with $ (intentional in heredocs/awk)
+        # SC2119/SC2120: Functions with optional args called without args
         run: |
-          shellcheck -e SC1091,SC2016 devbox main.sh entrypoint.sh \
+          shellcheck -e SC1091,SC2015,SC2016,SC2119,SC2120 devbox main.sh entrypoint.sh \
             lib/commands.sh lib/container.sh lib/ui.sh lib/profile.sh lib/allowlist.sh lib/firewall.sh lib/secrets.sh \
             tooling/profiles/*.sh tooling/completions.bash \
             proxy/entrypoint.sh
@@ -44,7 +46,7 @@ jobs:
       - name: Install shfmt
         env:
           SHFMT_VERSION: "3.10.0"
-          SHFMT_SHA256: "1173b81e8906f85a8d74e5779fa9726e5e55713115e7b51e0e4183a6d4a68b70"
+          SHFMT_SHA256: "1f57a384d59542f8fac5f503da1f3ea44242f46dff969569e80b524d64b71dbc"
         run: |
           curl -fsSL -o /tmp/shfmt "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64"
           echo "${SHFMT_SHA256}  /tmp/shfmt" | sha256sum -c -
@@ -70,8 +72,7 @@ jobs:
           uvx ruff format --check proxy/
       - name: Run mypy
         run: |
-          uv pip install --system --python 3.12 mypy types-PyYAML
-          mypy --ignore-missing-imports --disallow-untyped-defs --warn-return-any proxy/*.py
+          uvx --with types-PyYAML mypy --ignore-missing-imports --disallow-untyped-defs --warn-return-any proxy/*.py
 
   test-shell:
     name: Test shell scripts
@@ -100,9 +101,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
       - name: Install dependencies
-        run: uv pip install --system --python 3.12 -r tests/pytest/requirements.txt
+        run: |
+          python3 -m venv /tmp/devbox-test-venv
+          /tmp/devbox-test-venv/bin/pip install -r tests/pytest/requirements.txt
       - name: Run pytest
-        run: pytest tests/pytest/ -v
+        run: /tmp/devbox-test-venv/bin/pytest tests/pytest/ -v
 
   build-images:
     name: Build container images

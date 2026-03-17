@@ -33,13 +33,14 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
     gsd-opencode@1.22.1 opencode-mem@2.11.12
 
 # GitHub CLI.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
         | tee /etc/apt/sources.list.d/github-cli.list \
-    && apt-get update && apt-get install -y gh
+    && apt-get update && apt-get install -y --no-install-recommends gh
 
 # Oh My Zsh + Powerlevel10k + common plugins (external git repos — least cacheable, last).
 RUN git clone --depth=1 https://github.com/ohmyzsh/ohmyzsh.git /root/.oh-my-zsh \

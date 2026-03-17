@@ -1,0 +1,5 @@
+---
+# DL3008: Pin versions in apt-get install — impractical on Ubuntu (versions
+# change with every security update). Pinning breaks on next base image bump.
+ignored:
+  - DL3008

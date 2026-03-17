@@ -46,6 +46,7 @@ CREATE INDEX IF NOT EXISTS idx_requests_host ON requests(host);
 CREATE INDEX IF NOT EXISTS idx_requests_status ON requests(status);
 """
 
+
 def _init_schema(db: sqlite3.Connection) -> None:
     """Create the schema if needed and stamp the version."""
     try:

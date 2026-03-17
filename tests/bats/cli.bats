@@ -143,6 +143,8 @@ SCRIPT
 # --- ensure_global_dirs ---
 
 @test "ensure_global_dirs creates secrets with restrictive permissions" {
+    # Ensure clean state — mkdir -p is a no-op on existing dirs.
+    rm -rf "${DEVBOX_DATA}/secrets"
     ensure_global_dirs() {
         (umask 077 && mkdir -p "${DEVBOX_DATA}/secrets")
     }

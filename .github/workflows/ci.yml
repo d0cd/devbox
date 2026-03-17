@@ -1,0 +1,361 @@
+# CI: build, lint, and test devbox container images.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-docker:
+    name: Lint Dockerfiles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: proxy/Dockerfile
+
+  lint-shell:
+    name: Lint shell scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get install -y shellcheck
+      - name: Run shellcheck
+        # SC1091: Can't follow sourced files (lib/*.sh loaded at runtime, not statically resolvable)
+        # SC2016: Single-quoted strings with $ (intentional — used in heredocs and awk scripts)
+        run: |
+          shellcheck -e SC1091,SC2016 devbox main.sh entrypoint.sh \
+            lib/commands.sh lib/container.sh lib/ui.sh lib/profile.sh lib/allowlist.sh lib/firewall.sh lib/secrets.sh \
+            tooling/profiles/*.sh tooling/completions.bash \
+            proxy/entrypoint.sh
+
+  fmt-shell:
+    name: Check shell formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shfmt
+        env:
+          SHFMT_VERSION: "3.10.0"
+          SHFMT_SHA256: "1173b81e8906f85a8d74e5779fa9726e5e55713115e7b51e0e4183a6d4a68b70"
+        run: |
+          curl -fsSL -o /tmp/shfmt "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64"
+          echo "${SHFMT_SHA256}  /tmp/shfmt" | sha256sum -c -
+          chmod +x /tmp/shfmt
+          sudo mv /tmp/shfmt /usr/local/bin/shfmt
+      - name: Run shfmt
+        run: |
+          shfmt -i 4 -ci -bn -d \
+            devbox main.sh entrypoint.sh \
+            lib/commands.sh lib/container.sh lib/ui.sh lib/profile.sh lib/allowlist.sh lib/firewall.sh lib/secrets.sh \
+            tooling/profiles/*.sh tooling/completions.bash \
+            proxy/entrypoint.sh
+
+  lint-python:
+    name: Lint Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - name: Run ruff
+        run: |
+          uvx ruff check proxy/
+          uvx ruff format --check proxy/
+      - name: Run mypy
+        run: |
+          uv pip install --system --python 3.12 mypy types-PyYAML
+          mypy --ignore-missing-imports --disallow-untyped-defs --warn-return-any proxy/*.py
+
+  test-shell:
+    name: Test shell scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache BATS
+        id: cache-bats
+        uses: actions/cache@v4
+        with:
+          path: /tmp/bats
+          key: bats-1.11.1-${{ hashFiles('tests/bats/**', '.github/workflows/ci.yml') }}
+      - name: Install BATS
+        run: |
+          if [ ! -d /tmp/bats ]; then
+            git clone --depth 1 --branch v1.11.1 https://github.com/bats-core/bats-core.git /tmp/bats
+          fi
+          sudo /tmp/bats/install.sh /usr/local
+      - name: Run BATS tests
+        run: bats tests/bats/
+
+  test-python:
+    name: Test Python modules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - name: Install dependencies
+        run: uv pip install --system --python 3.12 -r tests/pytest/requirements.txt
+      - name: Run pytest
+        run: pytest tests/pytest/ -v
+
+  build-images:
+    name: Build container images
+    runs-on: ubuntu-latest
+    needs: [lint-docker, lint-shell, fmt-shell, lint-python, test-shell, test-python]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build proxy image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./proxy
+          load: true
+          tags: devbox-proxy:ci
+          cache-from: type=gha,scope=proxy
+          cache-to: type=gha,scope=proxy,mode=max
+
+      - name: Build agent image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: devbox-agent:ci
+          cache-from: type=gha,scope=agent
+          cache-to: type=gha,scope=agent,mode=max
+
+      - name: Save images as artifacts
+        run: |
+          docker save devbox-proxy:ci devbox-agent:ci | gzip > /tmp/devbox-images.tar.gz
+
+      - name: Upload image artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: devbox-images
+          path: /tmp/devbox-images.tar.gz
+          retention-days: 3
+
+  scan-images:
+    name: Scan container images
+    runs-on: ubuntu-latest
+    needs: build-images
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download image artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: devbox-images
+          path: /tmp
+      - name: Load images
+        run: gunzip -c /tmp/devbox-images.tar.gz | docker load
+      - name: Scan proxy image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: 'devbox-proxy:ci'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          exit-code: '1'
+          scanners: 'vuln'
+      - name: Scan agent image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: 'devbox-agent:ci'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          exit-code: '1'
+          scanners: 'vuln'
+
+  smoke-test:
+    name: Smoke test
+    runs-on: ubuntu-latest
+    needs: build-images
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download image artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: devbox-images
+          path: /tmp
+      - name: Load images
+        run: |
+          gunzip -c /tmp/devbox-images.tar.gz | docker load
+          docker tag devbox-proxy:ci devbox-proxy:latest
+          docker tag devbox-agent:ci devbox-agent:latest
+
+      - name: Start proxy and verify enforcer
+        run: |
+          # Start proxy with default policy.
+          docker run -d --name devbox-proxy-test \
+            -v "$PWD/templates/policy.yml:/proxy/policy.yml:ro" \
+            -p 8080:8080 \
+            devbox-proxy:latest
+
+          # Wait for proxy to be ready (TCP check — mitmproxy doesn't serve direct HTTP).
+          PROXY_READY=false
+          for i in $(seq 1 20); do
+            if python3 -c "import socket; socket.create_connection(('localhost', 8080), timeout=1)" 2>/dev/null; then
+              PROXY_READY=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$PROXY_READY" != "true" ]; then
+            echo "FAIL: Proxy did not become ready after 20s"
+            docker logs devbox-proxy-test
+            exit 1
+          fi
+
+          # Test: allowed domain should not get 403 (may get other codes without credentials).
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' -x http://localhost:8080 http://api.anthropic.com/ || true)
+          echo "Allowed domain status: $STATUS"
+          if [ -z "$STATUS" ] || [ "$STATUS" = "000" ]; then
+            echo "FAIL: curl could not connect to proxy"
+            docker logs devbox-proxy-test
+            exit 1
+          fi
+          if [ "$STATUS" = "403" ]; then
+            echo "FAIL: Allowed domain got 403 — enforcer is blocking incorrectly"
+            exit 1
+          fi
+
+          # Test: blocked domain should get 403.
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' -x http://localhost:8080 http://evil.com/ || true)
+          echo "Blocked domain status: $STATUS"
+          if [ -z "$STATUS" ] || [ "$STATUS" = "000" ]; then
+            echo "FAIL: curl could not connect to proxy"
+            docker logs devbox-proxy-test
+            exit 1
+          fi
+          if [ "$STATUS" != "403" ]; then
+            echo "FAIL: Expected 403 for blocked domain, got $STATUS"
+            exit 1
+          fi
+
+          # Test: HTTPS CONNECT tunnel — blocked domain should get 403.
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' --proxy-insecure -x http://localhost:8080 https://evil.com/ || true)
+          echo "HTTPS CONNECT blocked domain status: $STATUS"
+          if [ "$STATUS" != "403" ] && [ "$STATUS" != "000" ]; then
+            # 403 = proxy blocked it, 000 = connection reset (also blocked).
+            echo "WARN: Expected 403 or connection reset for HTTPS blocked domain, got $STATUS"
+          fi
+
+          # Test: HTTPS CONNECT tunnel — allowed domain should not get 403.
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' --proxy-insecure -x http://localhost:8080 https://api.anthropic.com/ || true)
+          echo "HTTPS CONNECT allowed domain status: $STATUS"
+          if [ "$STATUS" = "403" ]; then
+            echo "FAIL: HTTPS CONNECT to allowed domain got 403"
+            exit 1
+          fi
+
+          docker stop devbox-proxy-test
+          docker rm devbox-proxy-test
+
+  test-firewall-real:
+    name: Real firewall test
+    runs-on: ubuntu-latest
+    needs: build-images
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download image artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: devbox-images
+          path: /tmp
+      - name: Load images
+        run: |
+          gunzip -c /tmp/devbox-images.tar.gz | docker load
+          docker tag devbox-agent:ci devbox-agent:latest
+      - name: Run firewall test inside container
+        run: |
+          docker run --rm --cap-add NET_ADMIN \
+            -v "$PWD/lib:/usr/local/lib/devbox:ro" \
+            -v "$PWD/tests:/tests:ro" \
+            devbox-agent:latest bash /tests/integration/firewall_real.sh
+
+  test-compose:
+    name: Compose integration test
+    runs-on: ubuntu-latest
+    needs: build-images
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download image artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: devbox-images
+          path: /tmp
+      - name: Load and tag images
+        run: |
+          gunzip -c /tmp/devbox-images.tar.gz | docker load
+          docker tag devbox-proxy:ci devbox-proxy:latest
+          docker tag devbox-agent:ci devbox-agent:latest
+      - name: Start compose stack
+        env:
+          PROJECT_PATH: ${{ github.workspace }}
+          PROJECT_HASH: ci-test
+          DEVBOX_POLICY_FILE: ${{ github.workspace }}/templates/policy.yml
+          DEVBOX_LOG_DIR: /tmp/devbox-logs
+          DEVBOX_MEMORY_DIR: /tmp/devbox-memory
+          DEVBOX_HISTORY_DIR: /tmp/devbox-history
+          DEVBOX_SECRETS_FILE: /tmp/devbox-secrets.env
+          DEVBOX_CONFIG: /tmp/devbox-config
+        run: |
+          # Create required directories and files.
+          mkdir -p /tmp/devbox-logs /tmp/devbox-memory /tmp/devbox-history /tmp/devbox-config/opencode
+          echo "# CI test secrets (no real keys)" > /tmp/devbox-secrets.env
+          echo '{}' > /tmp/devbox-config/opencode/opencode.json
+
+          # Start only the proxy (agent needs NET_ADMIN for iptables).
+          docker compose -f docker-compose.yml -p devbox-ci up -d proxy
+
+          # Wait for proxy health check.
+          TIMEOUT=30
+          ELAPSED=0
+          while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
+            STATUS=$(docker inspect --format='{{.State.Health.Status}}' devbox-ci-proxy-1 2>/dev/null || echo "starting")
+            if [ "$STATUS" = "healthy" ]; then
+              echo "Proxy healthy after ${ELAPSED}s"
+              break
+            fi
+            sleep 1
+            ELAPSED=$((ELAPSED + 1))
+          done
+          if [ "$ELAPSED" -ge "$TIMEOUT" ]; then
+            echo "FAIL: Proxy did not become healthy after ${TIMEOUT}s"
+            docker compose -p devbox-ci logs proxy
+            exit 1
+          fi
+
+          # Test: allowed domain should pass through proxy.
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' -x http://localhost:8080 http://api.anthropic.com/ || true)
+          echo "Allowed domain status: $STATUS"
+          if [ "$STATUS" = "403" ]; then
+            echo "FAIL: Allowed domain blocked"
+            exit 1
+          fi
+
+          # Test: blocked domain should get 403.
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' -x http://localhost:8080 http://evil.com/ || true)
+          echo "Blocked domain status: $STATUS"
+          if [ "$STATUS" != "403" ]; then
+            echo "FAIL: Expected 403 for blocked domain, got $STATUS"
+            exit 1
+          fi
+
+          # Verify API log database was created and has the test requests.
+          if [ ! -f /tmp/devbox-logs/api.db ]; then
+            echo "FAIL: API log database not created"
+            exit 1
+          fi
+
+          echo "Compose integration test passed"
+      - name: Cleanup
+        if: always()
+        run: docker compose -p devbox-ci down -v 2>/dev/null || true

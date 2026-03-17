@@ -1,0 +1,4 @@
+# Trivy vulnerability ignore list for devbox container images.
+# Add CVE IDs here to suppress false positives or accepted risks.
+# Each line should contain a single CVE ID (e.g., CVE-2024-12345).
+# Document the reason as a comment above each entry.

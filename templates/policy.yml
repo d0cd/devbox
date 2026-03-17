@@ -1,0 +1,53 @@
+# devbox network policy — default allowlist.
+# Only domains listed here can be reached from the agent container.
+# Wildcard patterns (*.example.com) are supported.
+# Edit with: devbox allowlist add <domain>
+
+version: "1"
+
+allowed:
+  # Model APIs — required for AI tools (claude, opencode, gemini, codex).
+  - api.anthropic.com          # Claude API
+  - openrouter.ai              # OpenRouter (multi-model gateway)
+  - generativelanguage.googleapis.com  # Gemini API
+  - api.openai.com             # OpenAI / Codex API
+
+  # Package registries — required for language profile installs.
+  - crates.io                  # Rust crate metadata
+  - static.crates.io           # Rust crate downloads
+  - index.crates.io            # Rust sparse index
+  - registry.npmjs.org         # npm packages
+  - pypi.org                   # Python package index
+  - files.pythonhosted.org     # Python package downloads
+  - storage.googleapis.com     # Go modules, misc downloads
+
+  # CDN / package delivery
+  - cdn.jsdelivr.net           # npm/GitHub CDN
+  - cdn.npmmirror.com          # npm mirror (fallback)
+  - objects.githubusercontent.com  # GitHub release assets
+  - registry.yarnpkg.com       # Yarn registry
+
+  # Language toolchain installers (used by devbox profiles).
+  - sh.rustup.rs               # Rust installer
+  - static.rust-lang.org       # Rust toolchain downloads
+  - go.dev                     # Go homepage / docs
+  - dl.google.com              # Go binary downloads
+  - "*.golang.org"             # Go modules, playground, tools
+  - astral.sh                  # uv / ruff (Python tooling)
+
+  # Code hosting — required for git clone, push, pull.
+  - github.com                 # Git operations
+  - api.github.com             # GitHub API (gh CLI, actions)
+  - "*.githubusercontent.com"  # Raw content, avatars, releases
+  - "*.github.io"              # GitHub Pages (docs sites)
+
+  # Container registries
+  - registry-1.docker.io       # Docker Hub images
+  - auth.docker.io             # Docker Hub auth
+  - production.cloudflare.docker.com  # Docker Hub CDN
+  - proxy.golang.org           # Go module proxy
+  - sum.golang.org             # Go checksum database
+
+  # System updates — for apt inside container.
+  - security.ubuntu.com        # Security patches
+  - archive.ubuntu.com         # Package archive

@@ -1,0 +1,20 @@
+# Exclude files not needed in the agent image build context.
+.git
+.github
+.claude
+docs
+tests
+*.md
+!templates/*.md
+.pre-commit-config.yaml
+.gitignore
+.dockerignore
+.DS_Store
+__pycache__
+*.pyc
+logs/
+*.db
+*.env
+secrets/
+.private/
+proxy/

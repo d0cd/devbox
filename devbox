@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+# devbox — isolated containerized development environment.
+#
+# Usage:
+#   devbox [project-path]    Start environment and open shell (default: current dir)
+#   devbox shell             Open another shell into running environment
+#   devbox stop              Stop the running container stack
+#   devbox status            Show running sessions
+#   devbox info              Show container status and project info
+#   devbox profile [name]    Install a language profile (interactive if no name)
+#   devbox allowlist [cmd]   View/edit the network allowlist
+#   devbox secrets [cmd]     Manage API keys and secrets
+#   devbox logs              Show recent API calls
+#   devbox clean [--all]     Clean project data (--all for everything)
+#   devbox rebuild           Rebuild container images
+#   devbox update            Pull latest source and rebuild
+#   devbox help              Show this help
+set -euo pipefail
+
+DEVBOX_VERSION="0.3.0"
+
+# Resolve the directory where devbox itself is installed.
+DEVBOX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEVBOX_DATA="${DEVBOX_DATA:-$HOME/.devbox}"
+DEVBOX_CONFIG="${DEVBOX_CONFIG:-$HOME/.config/devbox}"
+
+if [ ! -f "${DEVBOX_ROOT}/lib/ui.sh" ]; then
+    echo "FATAL: Cannot resolve devbox installation at $DEVBOX_ROOT" >&2
+    exit 1
+fi
+
+# Source library modules.
+source "${DEVBOX_ROOT}/lib/ui.sh"
+source "${DEVBOX_ROOT}/lib/firewall.sh"
+source "${DEVBOX_ROOT}/lib/container.sh"
+source "${DEVBOX_ROOT}/lib/profile.sh"
+source "${DEVBOX_ROOT}/lib/allowlist.sh"
+source "${DEVBOX_ROOT}/lib/secrets.sh"
+source "${DEVBOX_ROOT}/lib/commands.sh"
+
+# Load per-project config (env vars take precedence over .devboxrc).
+_load_devboxrc "$(pwd)"
+
+# ---------------------------------------------------------------------------
+# Main dispatch
+# ---------------------------------------------------------------------------
+
+main() {
+    # Handle global --quiet flag.
+    if [ "${1:-}" = "--quiet" ] || [ "${1:-}" = "-q" ]; then
+        export DEVBOX_QUIET=1
+        shift
+    fi
+
+    local cmd="${1:-}"
+
+    # Commands that require Docker must have the daemon running.
+    case "$cmd" in
+        help | --help | -h | version | --version | -v | completions | secrets)
+            # Help, version, completions, and secrets management never need Docker.
+            ;;
+        *)
+            if ! docker info &>/dev/null; then
+                ui_error "Docker is not running. Start Docker and try again."
+                exit 1
+            fi
+            ;;
+    esac
+
+    case "$cmd" in
+        shell)
+            if [ "${2:-}" = "--help" ] || [ "${2:-}" = "-h" ]; then
+                echo "Usage: devbox shell"
+                echo ""
+                echo "Open an additional shell into the running devbox environment."
+                echo "The environment must already be started with 'devbox [project-path]'."
+                return 0
+            fi
+            cmd_shell
+            ;;
+        stop)
+            if [ "${2:-}" = "--help" ] || [ "${2:-}" = "-h" ]; then
+                echo "Usage: devbox stop"
+                echo ""
+                echo "Stop the running container stack. Prompts for confirmation."
+                echo "If multiple sessions are running, you will be asked to select one."
+                return 0
+            fi
+            cmd_stop
+            ;;
+        status)
+            if [ "${2:-}" = "--help" ] || [ "${2:-}" = "-h" ]; then
+                echo "Usage: devbox status"
+                echo ""
+                echo "Show all running devbox sessions with their project paths."
+                return 0
+            fi
+            cmd_status
+            ;;
+        info)
+            shift
+            cmd_info "${1:-}"
+            ;;
+        profile)
+            shift
+            if [ $# -gt 2 ]; then
+                ui_error "Too many arguments. Usage: devbox profile [name] [variant]"
+                exit 1
+            fi
+            cmd_profile "${1:-}" "${2:-}"
+            ;;
+        allowlist)
+            shift
+            cmd_allowlist "$@"
+            ;;
+        secrets)
+            shift
+            cmd_secrets "$@"
+            ;;
+        logs)
+            shift
+            cmd_logs "$@"
+            ;;
+        clean)
+            shift
+            cmd_clean "${1:-}"
+            ;;
+        rebuild)
+            cmd_rebuild
+            ;;
+        update)
+            cmd_update
+            ;;
+        help | --help | -h)
+            cmd_help
+            ;;
+        completions)
+            # Detect shell and output the appropriate completion script.
+            local shell_name="${2:-}"
+            if [ -z "$shell_name" ]; then
+                shell_name="$(basename "${SHELL:-bash}")"
+            fi
+            case "$shell_name" in
+                bash) cat "${DEVBOX_ROOT}/tooling/completions.bash" ;;
+                zsh) cat "${DEVBOX_ROOT}/tooling/completions.zsh" ;;
+                *)
+                    ui_error "Unsupported shell: '$shell_name'"
+                    ui_info "Supported shells: bash, zsh"
+                    exit 1
+                    ;;
+            esac
+            ;;
+        version | --version | -v)
+            echo "devbox v${DEVBOX_VERSION}"
+            ;;
+        *)
+            if [ -n "$cmd" ] && [ ! -d "$cmd" ]; then
+                ui_error "Unknown command: $cmd"
+                ui_info "Run 'devbox help' for available commands."
+                exit 1
+            fi
+            # No subcommand or a valid directory path — start a session.
+            cmd_start "$cmd"
+            ;;
+    esac
+}
+
+main "$@"

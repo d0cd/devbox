@@ -1,0 +1,16 @@
+# Normalize line endings for cross-platform builds.
+* text=auto
+
+# Shell scripts must use LF (bash breaks on CRLF).
+*.sh text eol=lf
+Dockerfile text eol=lf
+docker-compose.yml text eol=lf
+entrypoint.sh text eol=lf
+
+# Python source.
+*.py text eol=lf
+
+# Keep binary files untouched.
+*.png binary
+*.jpg binary
+*.gif binary

@@ -1,0 +1,29 @@
+# devbox network policy — default allowlist.
+# Only domains listed here can be reached from the agent container.
+# Wildcard patterns (*.example.com) are supported.
+
+version: "1"
+
+allowed:
+  # Model APIs
+  - api.anthropic.com
+  - openrouter.ai
+  - generativelanguage.googleapis.com
+  - api.openai.com
+
+  # Package registries
+  - crates.io
+  - static.crates.io
+  - index.crates.io
+  - registry.npmjs.org
+  - pypi.org
+  - files.pythonhosted.org
+
+  # Code hosting
+  - github.com
+  - api.github.com
+  - "*.githubusercontent.com"
+
+  # System updates
+  - security.ubuntu.com
+  - archive.ubuntu.com

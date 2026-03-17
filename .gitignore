@@ -1,0 +1,35 @@
+# Runtime data (never committed).
+logs/
+*.db
+*.db-wal
+*.db-shm
+
+# OS files.
+.DS_Store
+Thumbs.db
+
+# Editor files.
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Secrets (should never be here, but just in case).
+.env
+*.env
+secrets/
+
+# Python bytecode.
+__pycache__/
+*.pyc
+
+# Docker compose fallback paths (created if compose run directly).
+history/
+memory/
+
+# Private config overlay (cloned at runtime).
+.private/
+
+# Claude Code local settings (machine-specific paths and permissions).
+.claude/settings.local.json

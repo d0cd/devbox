@@ -1,0 +1,45 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "providers": {
+    "openrouter": {
+      "name": "OpenRouter",
+      "baseURL": "https://openrouter.ai/api/v1",
+      "apiKey": "$OPENROUTER_API_KEY"
+    },
+    "anthropic": {
+      "name": "Anthropic Direct",
+      "apiKey": "$ANTHROPIC_API_KEY"
+    }
+  },
+
+  "model": "openrouter/anthropic/claude-sonnet-4-5",
+
+  "mcpServers": {
+    "pal": {
+      "type": "local",
+      "command": ["uvx", "--from",
+        "git+https://github.com/BeehiveInnovations/pal-mcp-server.git",
+        "pal-mcp-server"
+      ],
+      "env": {
+        "ANTHROPIC_API_KEY": "$ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY": "$GEMINI_API_KEY",
+        "OPENAI_API_KEY": "$OPENAI_API_KEY",
+        "OPENROUTER_API_KEY": "$OPENROUTER_API_KEY",
+        "DEFAULT_MODEL": "auto",
+        "DISABLED_TOOLS": "tracer"
+      }
+    }
+  },
+
+  "plugin": ["opencode-mem"],
+
+  "rules": [
+    "Never run git commit, git push, git reset --hard, or cargo publish without explicit user confirmation.",
+    "Before any destructive file operation, state what will be changed and wait for approval.",
+    "Use clink to dispatch heavy tasks to specialist subagents to preserve main session context.",
+    "Use Gemini CLI via clink for tasks requiring large context (>200K tokens).",
+    "Use Codex via clink for isolated code review — keeps main context clean."
+  ]
+}

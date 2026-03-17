@@ -8,7 +8,7 @@
 _devbox_completions() {
     local cur prev
     cur="${COMP_WORDS[COMP_CWORD]}"
-    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    prev="${COMP_WORDS[COMP_CWORD - 1]}"
 
     local commands="shell stop status info profile allowlist secrets logs clean rebuild update completions help version"
 

@@ -14,6 +14,9 @@ setup_libs() {
         ui_header() { echo "=== $* ==="; }
         ui_confirm() { return 0; }
     }
+    # Library modules set -euo pipefail. BATS does not support set -e —
+    # it causes silent test aborts when functions use trap RETURN.
+    set +euo pipefail
 }
 
 # Create a temporary policy file with given allowed domains.

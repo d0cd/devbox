@@ -23,10 +23,10 @@ setup_libs() {
 create_test_policy() {
     local tmpfile
     tmpfile="$(mktemp)"
-    echo "version: 1" > "$tmpfile"
-    echo "allowed:" >> "$tmpfile"
+    echo "version: 1" >"$tmpfile"
+    echo "allowed:" >>"$tmpfile"
     for domain in "$@"; do
-        echo "  - ${domain}" >> "$tmpfile"
+        echo "  - ${domain}" >>"$tmpfile"
     done
     echo "$tmpfile"
 }
@@ -67,7 +67,9 @@ mock_docker() {
 
 # Set up a temporary devbox environment for testing CLI functions.
 stub_devbox_env() {
-    export DEVBOX_DATA="$(mktemp -d)"
-    export DEVBOX_CONFIG="$(mktemp -d)"
+    DEVBOX_DATA="$(mktemp -d)"
+    DEVBOX_CONFIG="$(mktemp -d)"
+    export DEVBOX_DATA
+    export DEVBOX_CONFIG
     export DEVBOX_ROOT
 }

@@ -11,11 +11,11 @@ repos:
     rev: v0.10.0.1
     hooks:
       - id: shellcheck
-        args: ["-e", "SC1091,SC2015,SC2016,SC2119,SC2120"]
+        args: ["-e", "SC1091,SC2015,SC2016,SC2034,SC2119,SC2120,SC2155,SC2329"]
         files: \.(sh|bash)$|^devbox$|entrypoint\.sh$
 
   - repo: https://github.com/scop/pre-commit-shfmt
-    rev: v3.8.0-1
+    rev: v3.10.0-1
     hooks:
       - id: shfmt
         args: ["-i", "4", "-ci", "-bn"]

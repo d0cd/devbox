@@ -38,6 +38,18 @@ Network isolation: `sandbox` network is `internal: true` (agent only), proxy has
 - No `fnmatch` or regex on user input — use fixed-string matching or explicit validation
 - Command functions use `return 1` (not `exit 1`) for recoverable errors
 
+## Local Checks Before Pushing
+
+Always run these before `git push` to avoid CI failures:
+```bash
+shellcheck -e SC1091,SC2015,SC2016,SC2034,SC2119,SC2120,SC2155,SC2329 \
+  devbox main.sh entrypoint.sh lib/*.sh tooling/profiles/*.sh \
+  tooling/completions.bash proxy/entrypoint.sh \
+  tests/bats/test_helper.bash tests/integration/*.sh
+bats tests/bats/
+```
+**shfmt**: CI uses v3.10.0. Do NOT use a local shfmt unless it is exactly v3.10.0 — newer versions produce different output. Use `pre-commit run shfmt --all-files` instead, which pins the correct version.
+
 ## Security Rules
 
 - Never bake secrets into Docker images

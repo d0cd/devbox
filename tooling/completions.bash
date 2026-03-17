@@ -10,7 +10,7 @@ _devbox_completions() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD - 1]}"
 
-    local commands="shell stop status info profile allowlist secrets logs clean rebuild update completions help version"
+    local commands="shell stop status info profile allowlist secrets logs clean resize rebuild update completions help version"
 
     case "$prev" in
         devbox)
@@ -47,7 +47,7 @@ _devbox_completions() {
             ;;
         logs)
             if [ "${COMP_WORDS[1]}" = "logs" ]; then
-                mapfile -t COMPREPLY < <(compgen -W "--errors --blocked --slow --hosts" -- "$cur")
+                mapfile -t COMPREPLY < <(compgen -W "--errors --blocked --slow --hosts --since --until" -- "$cur")
                 return
             fi
             ;;

@@ -11,8 +11,14 @@ PASS=0
 FAIL=0
 CONTAINER_NAME="devbox-smoke-test-$$"
 
-pass() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
-fail() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
+pass() {
+    echo "  PASS: $1"
+    PASS=$((PASS + 1))
+}
+fail() {
+    echo "  FAIL: $1"
+    FAIL=$((FAIL + 1))
+}
 
 cleanup() {
     echo "[smoke] Cleaning up..."
@@ -81,7 +87,7 @@ fi
 
 # Test 5: SQLite log DB populated after proxied requests.
 echo "[smoke] Checking API log..."
-sleep 2  # Give logger time to write.
+sleep 2 # Give logger time to write.
 LOG_COUNT=$(docker exec "$CONTAINER_NAME" python3 -c "
 import sqlite3, os
 db_path = '/data/api.db'

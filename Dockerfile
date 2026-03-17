@@ -34,7 +34,7 @@ ARG OPENCODE_VERSION=1.2.26
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
     npm install -g --omit=dev opencode-ai@${OPENCODE_VERSION} \
     @google/gemini-cli@0.33.1 @openai/codex@0.114.0 @anthropic-ai/claude-code@2.1.76 \
-    gsd-opencode@1.22.1 opencode-mem@2.11.12
+    gsd-opencode@1.22.1
 
 # GitHub CLI.
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -106,7 +106,7 @@ RUN chown -R devbox:devbox /home/devbox/.oh-my-zsh
 
 # npm global packages (includes OpenCode, Gemini CLI, Codex, Claude Code, etc.).
 COPY --from=builder /usr/lib/node_modules /usr/lib/node_modules
-COPY --from=builder /usr/bin/opencode /usr/bin/gemini /usr/bin/codex /usr/bin/claude /usr/bin/gsd /usr/bin/opencode-mem /usr/bin/
+COPY --from=builder /usr/bin/opencode /usr/bin/gemini /usr/bin/codex /usr/bin/claude /usr/bin/gsd-opencode /usr/bin/
 
 # GitHub CLI keyring + binary.
 COPY --from=builder /usr/share/keyrings/githubcli-archive-keyring.gpg /usr/share/keyrings/githubcli-archive-keyring.gpg

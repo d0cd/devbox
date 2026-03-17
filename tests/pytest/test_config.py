@@ -21,10 +21,12 @@ class TestOpenCodeConfig:
     def test_has_required_keys(self):
         config = ROOT / "config" / "opencode" / "opencode.json"
         data = json.loads(config.read_text())
-        # OpenCode config should have at minimum a provider or model config.
-        assert any(
-            key in data for key in ("provider", "providers", "model", "mcpServers")
-        ), f"opencode.json missing expected keys, got: {list(data.keys())}"
+        keys = set(data.keys())
+        # OpenCode config must have provider/providers AND at least one other key.
+        has_provider = bool(keys & {"provider", "providers"})
+        has_other = bool(keys & {"model", "mcpServers", "agents", "skills"})
+        assert has_provider, f"opencode.json missing provider config, got: {list(keys)}"
+        assert has_other, f"opencode.json missing model/mcpServers config, got: {list(keys)}"
 
 
 class TestPolicyTemplate:

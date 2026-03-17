@@ -38,6 +38,16 @@ teardown() {
     run cmd_secrets show
     [ "$status" -eq 0 ]
     [[ "$output" == *"EMPTY_KEY="* ]]
+    # Empty values must NOT be masked — verify no **** for this key.
+    local empty_line
+    empty_line="$(echo "$output" | grep "EMPTY_KEY")"
+    [[ "$empty_line" != *"****"* ]]
+}
+
+@test "secrets remove rejects invalid key format" {
+    run cmd_secrets rm "lower_case"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Invalid key"* ]]
 }
 
 # --- secrets set ---

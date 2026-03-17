@@ -76,9 +76,11 @@ teardown() {
 @test "logs --since filters by start time" {
     run cmd_logs --since "2026-03-16"
     [ "$status" -eq 0 ]
+    # March 16 entry should be present.
     [[ "$output" == *"api.anthropic.com"* ]]
-    # Should not include the March 15 entries
+    # March 15 entries should be excluded (evil.com and openai.com are only on March 15).
     [[ "$output" != *"evil.com"* ]]
+    [[ "$output" != *"api.openai.com"* ]]
 }
 
 @test "logs --until filters by end time" {
@@ -102,4 +104,13 @@ teardown() {
     run cmd_logs --since "2026-03-15" --errors
     [ "$status" -eq 0 ]
     [[ "$output" == *"500"* ]]
+}
+
+@test "logs --since with quotes does not inject SQL" {
+    # Single quotes in timestamp should be escaped, not break the query.
+    run cmd_logs --since "2026-03-15' OR '1'='1"
+    # Should succeed (return 0 results) — not crash or return all rows.
+    [ "$status" -eq 0 ]
+    # Should NOT match any rows (the injected string is not a valid timestamp).
+    [[ "$output" != *"evil.com"* ]]
 }

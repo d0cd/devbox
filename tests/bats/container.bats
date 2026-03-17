@@ -16,8 +16,6 @@ teardown() {
 # --- _find_devbox_projects ---
 
 @test "find_devbox_projects parses JSON array format" {
-    mock_docker '[{"Name":"devbox-abc123","Status":"running(2)","ConfigFiles":"/tmp/compose.yml"}]'
-    # Override docker compose specifically.
     docker() {
         if [[ "$*" == *"compose ls"* ]]; then
             echo '[{"Name":"devbox-abc123","Status":"running(2)"}]'

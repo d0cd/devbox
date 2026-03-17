@@ -31,5 +31,6 @@ memory/
 # Private config overlay (cloned at runtime).
 .private/
 
-# Claude Code local settings (machine-specific paths and permissions).
-.claude/settings.local.json
+# Claude Code — keep .claude/CLAUDE.md, ignore everything else.
+.claude/*
+!.claude/CLAUDE.md

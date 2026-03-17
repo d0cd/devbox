@@ -36,6 +36,8 @@ setup() {
 # --- profile_variants ---
 
 @test "profile_variants returns empty for go (no variants)" {
+    # Verify go.sh exists — otherwise empty output is trivially correct.
+    [ -f "${DEVBOX_ROOT}/tooling/profiles/go.sh" ]
     run profile_variants "go"
     [ "$status" -eq 0 ]
     [ -z "$output" ]

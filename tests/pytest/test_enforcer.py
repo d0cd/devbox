@@ -179,6 +179,37 @@ class TestEnforcerClass:
             enforcer.http_connect(flow)
         assert flow.response is None
 
+    def test_request_blocks_with_empty_allowlist(self, tmp_path):
+        """Empty allowlist (fail-closed) should block all traffic."""
+        enforcer = self._make_enforcer(tmp_path, domains=[])
+        flow = MagicMock()
+        flow.request.pretty_host = "anything.com"
+        flow.response = None
+        with patch("enforcer.ctx"):
+            enforcer.request(flow)
+        assert flow.response is not None
+        assert flow.response.status_code == 403
+
+    def test_maybe_reload_handles_stat_oserror(self, tmp_path):
+        """OSError on stat during reload check should not crash."""
+        policy = tmp_path / "policy.yml"
+        policy.write_text("allowed:\n  - good.com\n")
+        enforcer = Enforcer()
+        with patch("enforcer.POLICY_PATH", policy), \
+             patch("enforcer.ctx"):
+            enforcer._reload_policy()
+            assert "good.com" in enforcer.allowlist
+            # Force reload check by setting last_check far in the past.
+            enforcer._last_check = time.monotonic() - 60
+        # Now make stat fail during _maybe_reload's mtime check.
+        with patch("enforcer.POLICY_PATH") as mock_path, \
+             patch("enforcer.ctx"):
+            mock_path.exists.return_value = True
+            mock_path.stat.side_effect = OSError("permission denied")
+            # Should not raise — just log error and keep existing allowlist.
+            enforcer._maybe_reload()
+        assert "good.com" in enforcer.allowlist
+
     def test_maybe_reload_detects_file_change(self, tmp_path):
         policy = tmp_path / "policy.yml"
         policy.write_text("allowed:\n  - old.com\n")

@@ -118,8 +118,11 @@ class TestLoggerClass:
     def test_request_sets_start_time(self, tmp_path):
         logger_inst, _ = self._make_logger(tmp_path)
         flow = self._make_flow()
+        before = time.monotonic()
         logger_inst.request(flow)
+        after = time.monotonic()
         assert "devbox_start_time" in flow.metadata
+        assert before <= flow.metadata["devbox_start_time"] <= after
         logger_inst.done()
 
     def test_response_logs_to_db(self, tmp_path):
@@ -137,13 +140,28 @@ class TestLoggerClass:
     def test_response_calculates_duration(self, tmp_path):
         logger_inst, db_path = self._make_logger(tmp_path)
         flow = self._make_flow()
-        flow.metadata["devbox_start_time"] = time.monotonic() - 0.1
+        # Set start_time 500ms ago — large enough to not flake.
+        flow.metadata["devbox_start_time"] = time.monotonic() - 0.5
         with patch("logger.ctx"):
             logger_inst.response(flow)
         db = sqlite3.connect(str(db_path))
         row = db.execute("SELECT duration_ms FROM requests").fetchone()
         assert row[0] is not None
-        assert row[0] >= 100  # At least 100ms.
+        assert row[0] >= 400  # At least ~400ms (with margin for CI).
+        assert row[0] < 5000  # Sanity upper bound.
+        db.close()
+        logger_inst.done()
+
+    def test_response_without_request_has_null_duration(self, tmp_path):
+        """When request() is never called, duration_ms should be NULL."""
+        logger_inst, db_path = self._make_logger(tmp_path)
+        flow = self._make_flow()
+        # Skip calling request() — devbox_start_time is never set.
+        with patch("logger.ctx"):
+            logger_inst.response(flow)
+        db = sqlite3.connect(str(db_path))
+        row = db.execute("SELECT duration_ms FROM requests").fetchone()
+        assert row[0] is None
         db.close()
         logger_inst.done()
 

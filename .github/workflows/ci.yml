@@ -334,7 +334,14 @@ jobs:
           echo '{}' > /tmp/devbox-config/opencode/opencode.json
 
           # Start only the proxy (agent needs NET_ADMIN for iptables).
-          docker compose -f docker-compose.yml -p devbox-ci up -d proxy
+          # Publish port 8080 for host-side testing (compose has no ports mapping).
+          cat > /tmp/compose-ci-override.yml <<'OVERRIDE'
+services:
+  proxy:
+    ports:
+      - "8080:8080"
+OVERRIDE
+          docker compose -f docker-compose.yml -f /tmp/compose-ci-override.yml -p devbox-ci up -d proxy
 
           # Wait for proxy health check.
           TIMEOUT=30

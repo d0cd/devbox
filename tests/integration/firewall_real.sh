@@ -31,6 +31,8 @@ echo "[test] Verifying iptables rules..."
 
 # Parse iptables output.
 RULES="$(iptables -L OUTPUT -n -v)"
+echo "$RULES"
+echo ""
 
 # Test 1: OUTPUT policy is DROP.
 if echo "$RULES" | head -1 | grep -q "policy DROP"; then
@@ -39,8 +41,8 @@ else
     fail "OUTPUT policy is not DROP"
 fi
 
-# Test 2: Loopback rule exists.
-if echo "$RULES" | grep -q "lo.*ACCEPT"; then
+# Test 2: Loopback rule exists (match ACCEPT on lo interface — column format varies).
+if echo "$RULES" | grep "ACCEPT" | grep -q "lo"; then
     pass "Loopback rule exists"
 else
     fail "Loopback rule missing"

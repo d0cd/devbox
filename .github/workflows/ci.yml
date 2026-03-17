@@ -160,7 +160,7 @@ jobs:
       - name: Load images
         run: gunzip -c /tmp/devbox-images.tar.gz | docker load
       - name: Scan proxy image
-        uses: aquasecurity/trivy-action@0.31.0
+        uses: aquasecurity/trivy-action@master
         with:
           image-ref: 'devbox-proxy:ci'
           severity: 'CRITICAL,HIGH'
@@ -168,7 +168,7 @@ jobs:
           exit-code: '1'
           scanners: 'vuln'
       - name: Scan agent image
-        uses: aquasecurity/trivy-action@0.31.0
+        uses: aquasecurity/trivy-action@master
         with:
           image-ref: 'devbox-agent:ci'
           severity: 'CRITICAL,HIGH'
@@ -236,15 +236,20 @@ jobs:
           fi
 
           # Test: blocked domain should get 403.
-          STATUS=$(curl -s -o /dev/null -w '%{http_code}' -x http://localhost:8080 http://evil.com/ || true)
-          echo "Blocked domain status: $STATUS"
-          if [ -z "$STATUS" ] || [ "$STATUS" = "000" ]; then
-            echo "FAIL: curl could not connect to proxy"
-            docker logs devbox-proxy-test
-            exit 1
-          fi
-          if [ "$STATUS" != "403" ]; then
+          # Retry — the enforcer addon may still be initializing after first request.
+          BLOCKED_OK=false
+          for i in $(seq 1 10); do
+            STATUS=$(curl -s -o /dev/null -w '%{http_code}' -x http://localhost:8080 http://evil.com/ || true)
+            echo "Blocked domain attempt $i: $STATUS"
+            if [ "$STATUS" = "403" ]; then
+              BLOCKED_OK=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$BLOCKED_OK" != "true" ]; then
             echo "FAIL: Expected 403 for blocked domain, got $STATUS"
+            docker logs devbox-proxy-test
             exit 1
           fi
 

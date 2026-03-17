@@ -64,19 +64,24 @@ LABEL org.opencontainers.image.title="devbox-agent" \
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Install curl + ca-certificates first (needed for NodeSource setup).
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl
+
 # Node.js 22 LTS (runtime needs node for npm global binaries).
 # hadolint ignore=DL3008
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs
 
-# Runtime-only system packages (curl kept for healthcheck).
+# Runtime-only system packages.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
     bash \
-    ca-certificates \
-    curl \
     delta \
     fzf \
     git \

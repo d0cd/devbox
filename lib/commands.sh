@@ -333,7 +333,7 @@ cmd_stop() {
         ui_info "Cancelled."
         return 0
     fi
-    docker compose -p "$project" down
+    docker compose -f "${DEVBOX_ROOT}/docker-compose.yml" -p "$project" down
     ui_info "Container stack stopped."
 }
 
@@ -506,10 +506,18 @@ cmd_logs() {
     while [ $# -gt 0 ]; do
         case "$1" in
             --since)
+                if [ $# -lt 2 ] || [ -z "${2:-}" ]; then
+                    ui_error "--since requires a timestamp argument"
+                    return 1
+                fi
                 since="$2"
                 shift 2
                 ;;
             --until)
+                if [ $# -lt 2 ] || [ -z "${2:-}" ]; then
+                    ui_error "--until requires a timestamp argument"
+                    return 1
+                fi
                 until="$2"
                 shift 2
                 ;;
@@ -520,13 +528,25 @@ cmd_logs() {
         esac
     done
 
-    # Build time filter clause.
+    # Validate timestamp format to prevent SQL injection.
+    # Accept ISO 8601 timestamps: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS (with optional fractional seconds).
+    local _ts_pattern='^[0-9]{4}-[0-9]{2}-[0-9]{2}([T ][0-9]{2}:[0-9]{2}(:[0-9]{2}(\.[0-9]+)?)?)?$'
+    if [ -n "$since" ] && [[ ! "$since" =~ $_ts_pattern ]]; then
+        ui_error "Invalid --since timestamp: '$since' (use YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)"
+        return 1
+    fi
+    if [ -n "$until" ] && [[ ! "$until" =~ $_ts_pattern ]]; then
+        ui_error "Invalid --until timestamp: '$until' (use YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)"
+        return 1
+    fi
+
+    # Build time filter clause (values validated against strict pattern above).
     local time_clause=""
     if [ -n "$since" ]; then
-        time_clause="${time_clause} AND timestamp >= '${since//\'/\'\'}'"
+        time_clause="${time_clause} AND timestamp >= '${since}'"
     fi
     if [ -n "$until" ]; then
-        time_clause="${time_clause} AND timestamp <= '${until//\'/\'\'}'"
+        time_clause="${time_clause} AND timestamp <= '${until}'"
     fi
 
     case "${remaining[0]:-}" in
@@ -656,6 +676,8 @@ cmd_resize() {
     export DEVBOX_SECRETS_FILE="${DEVBOX_DATA}/secrets/.env"
     export DEVBOX_PROJECT_SECRETS_FILE="${project_dir}/secrets/.env"
     export DEVBOX_CONFIG
+    export DEVBOX_RELOAD_INTERVAL="${DEVBOX_RELOAD_INTERVAL:-30}"
+    export DEVBOX_BRIDGE_SUBNET="${DEVBOX_BRIDGE_SUBNET:-}"
 
     docker compose -f "${DEVBOX_ROOT}/docker-compose.yml" \
         -p "$project" up -d --force-recreate agent

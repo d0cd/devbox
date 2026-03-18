@@ -44,7 +44,7 @@ devbox secrets set GIT_AUTHOR_EMAIL you@example.com
 # Enable tab completion
 source <(devbox completions)
 
-# Start a session
+# Start a session (first run builds images — takes ~5-10 min)
 cd ~/projects/my-app
 devbox
 ```
@@ -87,11 +87,15 @@ devbox allowlist reset     # Reset allowlist to defaults
 devbox secrets             # Show API keys (values masked)
 devbox secrets set K V     # Set a secret
 devbox secrets edit        # Open secrets in $EDITOR
+devbox secrets remove K    # Remove a secret
+devbox secrets path        # Print path to secrets file
 devbox logs                # Show recent API calls
 devbox logs --errors       # Show recent 4xx/5xx responses
 devbox logs --blocked      # Show requests blocked by enforcer
 devbox logs --slow         # Show requests slower than 5 seconds
 devbox logs --hosts        # Show request counts by host
+devbox logs --since 1h     # Show logs from the last hour
+devbox logs --until 2025-01-01  # Show logs before a date
 devbox resize 12G          # Resize to 12 GB RAM (restarts container)
 devbox resize 16G 8        # Resize to 16 GB RAM and 8 CPUs
 devbox clean               # Clean this project's data
@@ -99,6 +103,7 @@ devbox clean --all         # Clean all devbox data
 devbox rebuild             # Rebuild container images
 devbox update              # Pull latest source and rebuild
 devbox completions         # Output shell completions
+devbox --version           # Print devbox version
 devbox help                # Show help and usage info
 ```
 

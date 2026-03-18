@@ -106,11 +106,31 @@ teardown() {
     [[ "$output" == *"500"* ]]
 }
 
-@test "logs --since with quotes does not inject SQL" {
-    # Single quotes in timestamp should be escaped, not break the query.
+@test "logs --since with quotes rejects SQL injection" {
+    # Malicious timestamp should be rejected by validation, not reach the query.
     run cmd_logs --since "2026-03-15' OR '1'='1"
-    # Should succeed (return 0 results) — not crash or return all rows.
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Invalid --since timestamp"* ]]
+}
+
+@test "logs --since rejects missing argument" {
+    run cmd_logs --since
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"--since requires a timestamp"* ]]
+}
+
+@test "logs --until rejects missing argument" {
+    run cmd_logs --until
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"--until requires a timestamp"* ]]
+}
+
+@test "logs --since accepts ISO date format" {
+    run cmd_logs --since "2026-03-15"
     [ "$status" -eq 0 ]
-    # Should NOT match any rows (the injected string is not a valid timestamp).
-    [[ "$output" != *"evil.com"* ]]
+}
+
+@test "logs --since accepts ISO datetime format" {
+    run cmd_logs --since "2026-03-15T10:00:00"
+    [ "$status" -eq 0 ]
 }

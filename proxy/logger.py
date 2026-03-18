@@ -24,9 +24,15 @@ TRUNCATION_MARKER = "\n... [TRUNCATED by devbox logger at 64KB] ..."
 SCHEMA_VERSION = 1
 
 # Prune rows older than this many days (0 = no pruning).
-MAX_LOG_AGE_DAYS = int(os.environ.get("DEVBOX_LOG_MAX_AGE_DAYS", "90"))
+try:
+    MAX_LOG_AGE_DAYS = int(os.environ.get("DEVBOX_LOG_MAX_AGE_DAYS", "90"))
+except ValueError:
+    MAX_LOG_AGE_DAYS = 90
 # Maximum number of rows to retain (0 = no limit).
-MAX_LOG_ROWS = int(os.environ.get("DEVBOX_LOG_MAX_ROWS", "100000"))
+try:
+    MAX_LOG_ROWS = int(os.environ.get("DEVBOX_LOG_MAX_ROWS", "100000"))
+except ValueError:
+    MAX_LOG_ROWS = 100000
 
 SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS requests (
@@ -64,16 +70,20 @@ def _init_schema(db: sqlite3.Connection) -> None:
 
 
 def _truncate(body: bytes | None, max_size: int = MAX_BODY_SIZE) -> str | None:
-    """Decode and optionally truncate a body for storage."""
+    """Decode and optionally truncate a body for storage.
+
+    Truncation is based on byte length to enforce a consistent size limit
+    regardless of character encoding.
+    """
     if body is None or len(body) == 0:
         return None
 
-    text = body.decode("utf-8", errors="replace")
+    # Truncate at the byte level before decoding to enforce the size limit.
+    if len(body) > max_size:
+        body = body[:max_size]
+        return body.decode("utf-8", errors="replace") + TRUNCATION_MARKER
 
-    if len(text) > max_size:
-        return text[:max_size] + TRUNCATION_MARKER
-
-    return text
+    return body.decode("utf-8", errors="replace")
 
 
 def _prune(db: sqlite3.Connection) -> int:
@@ -176,6 +186,7 @@ class Logger:
         """Close the database on shutdown."""
         if self.db is not None:
             self.db.close()
+            self.db = None
 
 
 addons = [Logger()]

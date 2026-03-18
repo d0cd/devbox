@@ -85,6 +85,7 @@ for d in data.get('allowed', []):
 }
 
 # Add multiple domains to the allowlist in a single atomic write.
+# Uses flock to prevent concurrent modifications.
 _allowlist_add_bulk() {
     local policy_file="$1"
     shift
@@ -96,28 +97,33 @@ _allowlist_add_bulk() {
         return 1
     fi
     trap 'rm -f "$tmpfile"' RETURN
-    cat "$policy_file" >"$tmpfile"
 
-    local added=0
-    local domain
-    for domain in "$@"; do
-        if _domain_exists "$policy_file" "$domain"; then
-            ui_info "Domain '$domain' is already in the allowlist."
+    (
+        flock -w 5 9 || { ui_error "Failed to acquire policy file lock."; return 1; }
+
+        cat "$policy_file" >"$tmpfile"
+
+        local added=0
+        local domain
+        for domain in "$@"; do
+            if _domain_exists "$policy_file" "$domain"; then
+                ui_info "Domain '$domain' is already in the allowlist."
+            else
+                echo "  - ${domain}" >>"$tmpfile"
+                ui_info "Added '$domain' to allowlist."
+                added=$((added + 1))
+            fi
+        done
+
+        if [ "$added" -gt 0 ]; then
+            mv "$tmpfile" "$policy_file"
+            _reload_message
         else
-            echo "  - ${domain}" >>"$tmpfile"
-            ui_info "Added '$domain' to allowlist."
-            added=$((added + 1))
+            rm -f "$tmpfile"
         fi
-    done
+    ) 9>"${policy_file}.lock"
 
-    if [ "$added" -gt 0 ]; then
-        mv "$tmpfile" "$policy_file"
-        trap - RETURN
-        _reload_message
-    else
-        rm -f "$tmpfile"
-        trap - RETURN
-    fi
+    trap - RETURN
 }
 
 # Add one or more domains to the allowlist.

@@ -19,7 +19,10 @@ from mitmproxy import ctx, http
 POLICY_PATH = Path("/proxy/policy.yml")
 BLOCKED_BODY_PREFIX = "BLOCKED by devbox enforcer: "
 BLOCKED_BODY_SUFFIX = " is not in the allowlist"
-RELOAD_INTERVAL = int(os.environ.get("DEVBOX_RELOAD_INTERVAL", "30"))
+try:
+    RELOAD_INTERVAL = int(os.environ.get("DEVBOX_RELOAD_INTERVAL", "30"))
+except ValueError:
+    RELOAD_INTERVAL = 30
 
 # Module-level logger for standalone functions (usable outside mitmproxy).
 # Addon methods use ctx.log (mitmproxy's context logger) instead.
@@ -132,7 +135,9 @@ class Enforcer:
 
     def _blocked_body(self, host: str) -> bytes:
         """Generate a per-request blocked response body."""
-        return f"{BLOCKED_BODY_PREFIX}{host}{BLOCKED_BODY_SUFFIX}".encode()
+        # Truncate host to prevent oversized responses from malicious Host headers.
+        safe_host = host[:253] if len(host) > 253 else host
+        return f"{BLOCKED_BODY_PREFIX}{safe_host}{BLOCKED_BODY_SUFFIX}".encode()
 
     def request(self, flow: http.HTTPFlow) -> None:
         """Block HTTP requests to non-allowed domains."""

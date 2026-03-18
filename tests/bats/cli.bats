@@ -60,15 +60,7 @@ SCRIPT
 # --- project_hash ---
 
 @test "project_hash returns deterministic 16-char hex" {
-    # Inline the function for testing (sourcing devbox calls main).
-    project_hash() {
-        local path="$1"
-        if command -v sha256sum &>/dev/null; then
-            echo -n "$path" | sha256sum | cut -c1-16
-        elif command -v shasum &>/dev/null; then
-            echo -n "$path" | shasum -a 256 | cut -c1-16
-        fi
-    }
+    source "${DEVBOX_ROOT}/lib/commands.sh"
     local hash1 hash2
     hash1="$(project_hash "/tmp/test-project")"
     hash2="$(project_hash "/tmp/test-project")"
@@ -78,14 +70,7 @@ SCRIPT
 }
 
 @test "project_hash differs for different paths" {
-    project_hash() {
-        local path="$1"
-        if command -v sha256sum &>/dev/null; then
-            echo -n "$path" | sha256sum | cut -c1-16
-        elif command -v shasum &>/dev/null; then
-            echo -n "$path" | shasum -a 256 | cut -c1-16
-        fi
-    }
+    source "${DEVBOX_ROOT}/lib/commands.sh"
     local hash1 hash2
     hash1="$(project_hash "/tmp/project-a")"
     hash2="$(project_hash "/tmp/project-b")"
@@ -95,30 +80,14 @@ SCRIPT
 # --- resolve_project_path ---
 
 @test "resolve_project_path resolves current directory" {
-    resolve_project_path() {
-        local target="${1:-.}"
-        if [ -d "$target" ]; then
-            (cd "$target" && pwd)
-        else
-            echo "[error] Project path does not exist: $target" >&2
-            return 1
-        fi
-    }
+    source "${DEVBOX_ROOT}/lib/commands.sh"
     local result
     result="$(resolve_project_path ".")"
     [ "$result" = "$(pwd)" ]
 }
 
 @test "resolve_project_path fails on nonexistent directory" {
-    resolve_project_path() {
-        local target="${1:-.}"
-        if [ -d "$target" ]; then
-            (cd "$target" && pwd)
-        else
-            echo "[error] Project path does not exist: $target" >&2
-            return 1
-        fi
-    }
+    source "${DEVBOX_ROOT}/lib/commands.sh"
     run resolve_project_path "/nonexistent/path/that/does/not/exist"
     [ "$status" -ne 0 ]
 }
@@ -126,18 +95,16 @@ SCRIPT
 # --- ensure_project_dirs ---
 
 @test "ensure_project_dirs creates expected structure" {
-    ensure_project_dirs() {
-        local hash="$1"
-        local project_dir="${DEVBOX_DATA}/${hash}"
-        mkdir -p \
-            "${project_dir}/history" \
-            "${project_dir}/logs" \
-            "${project_dir}/memory"
-    }
+    source "${DEVBOX_ROOT}/lib/commands.sh"
     ensure_project_dirs "abc123"
     [ -d "${DEVBOX_DATA}/abc123/history" ]
     [ -d "${DEVBOX_DATA}/abc123/logs" ]
     [ -d "${DEVBOX_DATA}/abc123/memory" ]
+    [ -d "${DEVBOX_DATA}/abc123/secrets" ]
+    # Secrets dir should have restrictive permissions.
+    local perms
+    perms="$(stat -c '%a' "${DEVBOX_DATA}/abc123/secrets" 2>/dev/null || stat -f '%Lp' "${DEVBOX_DATA}/abc123/secrets" 2>/dev/null)"
+    [ "$perms" = "700" ]
 }
 
 # --- ensure_global_dirs ---
@@ -145,9 +112,7 @@ SCRIPT
 @test "ensure_global_dirs creates secrets with restrictive permissions" {
     # Ensure clean state — mkdir -p is a no-op on existing dirs.
     rm -rf "${DEVBOX_DATA}/secrets"
-    ensure_global_dirs() {
-        (umask 077 && mkdir -p "${DEVBOX_DATA}/secrets")
-    }
+    source "${DEVBOX_ROOT}/lib/commands.sh"
     ensure_global_dirs
     [ -d "${DEVBOX_DATA}/secrets" ]
     # Check permissions (should be 700 on the secrets dir).

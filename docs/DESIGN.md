@@ -201,6 +201,10 @@ devbox clean --project        # Clean this project's data
 devbox clean --all            # Clean everything
 devbox rebuild                # Rebuild base image
 devbox update                 # Pull latest source and rebuild
+devbox secrets                # Manage API keys and credentials
+devbox resize 12G             # Resize container memory (restarts)
+devbox status                 # Show running sessions
+devbox completions            # Output shell completions
 devbox help                   # Show help and usage info
 ```
 
@@ -258,6 +262,7 @@ devbox/
 │   ├── commands.sh             # CLI command handlers and helpers
 │   ├── container.sh            # Container lifecycle functions
 │   ├── firewall.sh             # iptables + ip6tables setup
+│   ├── secrets.sh              # Secrets management (set/show/edit/remove)
 │   ├── profile.sh              # Profile management
 │   ├── allowlist.sh            # Allowlist CLI
 │   └── ui.sh                   # TUI helpers, menus
@@ -265,6 +270,7 @@ devbox/
 │   ├── completions.bash        # Bash tab completion
 │   ├── completions.zsh         # Zsh tab completion
 │   └── profiles/               # Language/tool profile definitions
+│       ├── _common.sh
 │       ├── rust.sh
 │       ├── python.sh
 │       ├── node.sh

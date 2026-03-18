@@ -10,12 +10,6 @@ updates:
     schedule:
       interval: weekly
 
-  # npm tools installed in Dockerfile (claude-code, opencode, gemini-cli, etc.).
-  - package-ecosystem: npm
-    directory: /
-    schedule:
-      interval: weekly
-
   # GitHub Actions versions.
   - package-ecosystem: github-actions
     directory: /

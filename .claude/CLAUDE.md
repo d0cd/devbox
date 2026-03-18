@@ -80,10 +80,15 @@ lib/                    # Shell library modules
   profile.sh            # Profile management
   allowlist.sh          # Allowlist management
   firewall.sh           # iptables initialization
-tooling/profiles/       # Language profile scripts (rust/python/node/go)
-config/                 # Default OpenCode + PAL MCP configuration
-  opencode.json
-  pal/systemprompts/clink/  # Subagent role prompts
+  secrets.sh            # Secrets management
+tooling/
+  completions.bash      # Bash tab completion
+  completions.zsh       # Zsh tab completion
+  profiles/             # Language profile scripts (rust/python/node/go)
+config/
+  opencode/             # Default OpenCode + PAL MCP configuration
+    opencode.json
+    pal/systemprompts/clink/  # Subagent role prompts
 templates/              # Default configs (policy.yml, zshrc, tmux.conf, AGENTS.md, private-overlay.Dockerfile)
 docs/                   # DESIGN.md, PLAN.md
 .github/workflows/      # CI (lint, build with caching, smoke test)

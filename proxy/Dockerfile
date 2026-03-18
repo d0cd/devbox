@@ -1,5 +1,5 @@
 # Proxy sidecar: mitmproxy with domain enforcement and request logging.
-FROM python:3.12-slim@sha256:ccc7089399c8bb65dd1fb3ed6d55efa538a3f5e7fca3f5988ac3b5b87e593bf0
+FROM python:3.14-slim@sha256:584e89d31009a79ae4d9e3ab2fba078524a6c0921cb2711d05e8bb5f628fc9b9
 
 ARG DEVBOX_VERSION=0.3.0
 LABEL org.opencontainers.image.title="devbox-proxy" \

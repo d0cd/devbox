@@ -1,0 +1,23 @@
+version: 2
+updates:
+  # Docker base images (ubuntu:24.04, python:3.12-slim).
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /proxy
+    schedule:
+      interval: weekly
+
+  # npm tools installed in Dockerfile (claude-code, opencode, gemini-cli, etc.).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+
+  # GitHub Actions versions.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

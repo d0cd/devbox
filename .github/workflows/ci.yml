@@ -121,6 +121,18 @@ jobs:
           exit-code: '1'
           scanners: 'vuln'
           trivyignores: '.trivyignore'
+      # Audit scan WITHOUT ignores — informational only.
+      # When this stops finding issues, the .trivyignore entries can be removed.
+      - name: Audit ignored CVEs (informational)
+        if: always()
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: 'devbox-agent:ci'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          exit-code: '1'
+          scanners: 'vuln'
 
   smoke-test:
     name: Smoke test

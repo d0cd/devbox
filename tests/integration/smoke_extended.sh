@@ -36,10 +36,15 @@ docker run -d --name "$CONTAINER_NAME" \
     -p 18080:8080 \
     devbox-proxy:latest
 
-# Wait for proxy to be ready.
+# Wait for proxy to be ready — socket + enforcer addon must both be loaded.
+# Retry with backoff: a TCP socket may accept connections before mitmproxy
+# addons finish initializing, so we probe an actual blocked domain until we
+# get a 403, which proves the enforcer is active.
+echo "[smoke] Waiting for proxy (socket + enforcer)..."
 PROXY_READY=false
-for i in $(seq 1 20); do
-    if python3 -c "import socket; socket.create_connection(('localhost', 18080), timeout=1)" 2>/dev/null; then
+for i in $(seq 1 30); do
+    STATUS=$(curl -s -o /dev/null -w '%{http_code}' -x http://localhost:18080 http://enforcer-readiness-probe.invalid/ 2>/dev/null || true)
+    if [ "$STATUS" = "403" ]; then
         PROXY_READY=true
         break
     fi
@@ -47,14 +52,20 @@ for i in $(seq 1 20); do
 done
 
 if [ "$PROXY_READY" != "true" ]; then
-    echo "FATAL: Proxy did not become ready after 20s"
+    echo "FATAL: Proxy enforcer did not become ready after 30s"
     docker logs "$CONTAINER_NAME"
     exit 1
 fi
-echo "[smoke] Proxy is ready."
+echo "[smoke] Proxy is ready (enforcer returned 403)."
 
 # Test 1: Allowed domain should not get 403.
-STATUS=$(curl -s -o /dev/null -w '%{http_code}' -x http://localhost:18080 http://api.anthropic.com/ || true)
+# Retry — proxy may still be initializing CA cert after enforcer is up.
+STATUS="000"
+for i in $(seq 1 10); do
+    STATUS=$(curl -s -o /dev/null -w '%{http_code}' -x http://localhost:18080 http://api.anthropic.com/ || true)
+    [ "$STATUS" != "000" ] && [ -n "$STATUS" ] && break
+    sleep 2
+done
 if [ "$STATUS" != "403" ]; then
     pass "Allowed domain (api.anthropic.com) not blocked (status: $STATUS)"
 else
@@ -87,7 +98,7 @@ fi
 
 # Test 5: SQLite log DB populated after proxied requests.
 echo "[smoke] Checking API log..."
-sleep 2 # Give logger time to write.
+sleep 3 # Give logger time to flush WAL.
 LOG_COUNT=$(docker exec "$CONTAINER_NAME" python3 -c "
 import sqlite3, os
 db_path = '/data/api.db'

@@ -9,6 +9,6 @@ test-shell:
 	bats tests/bats/
 
 test-python:
-	python3 -m pytest tests/pytest/ -v
+	uv run --with pytest --with pyyaml --with mitmproxy pytest tests/pytest/ -v
 
 ci: lint test

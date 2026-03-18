@@ -44,12 +44,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
-      - name: Install dependencies
-        run: |
-          python3 -m venv /tmp/devbox-test-venv
-          /tmp/devbox-test-venv/bin/pip install -r tests/pytest/requirements.txt
       - name: Run pytest
-        run: /tmp/devbox-test-venv/bin/pytest tests/pytest/ -v
+        run: uv run --with pytest --with pyyaml --with mitmproxy pytest tests/pytest/ -v
 
   build-images:
     name: Build container images

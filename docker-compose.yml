@@ -53,7 +53,7 @@ services:
         limits:
           memory: ${DEVBOX_MEMORY:-8G}
           cpus: ${DEVBOX_CPUS:-4.0}
-    pids_limit: 512
+          pids: 512
     stdin_open: true
     tty: true
     restart: unless-stopped
@@ -67,7 +67,6 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    pids_limit: 128
     tmpfs:
       - /tmp:size=64M
     volumes:
@@ -82,6 +81,7 @@ services:
         limits:
           memory: 1G
           cpus: '1.0'
+          pids: 128
     healthcheck:
       # Verify proxy is accepting connections. Addon loading is validated at startup.
       test: ["CMD", "python3", "-c", "import socket; s=socket.create_connection(('localhost', 8080), timeout=2); s.close()"]

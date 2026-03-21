@@ -34,3 +34,9 @@ memory/
 # Claude Code — keep .claude/CLAUDE.md, ignore everything else.
 .claude/*
 !.claude/CLAUDE.md
+# Auto-generated CLAUDE.md context files in subdirectories.
+docs/CLAUDE.md
+lib/CLAUDE.md
+templates/CLAUDE.md
+tooling/CLAUDE.md
+tooling/profiles/CLAUDE.md

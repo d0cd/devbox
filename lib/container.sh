@@ -6,6 +6,16 @@
 # All functions expect DEVBOX_ROOT, DEVBOX_DATA, and DEVBOX_CONFIG to be set.
 set -euo pipefail
 
+# Build compose file arguments. Includes the private override if present.
+# Usage: docker compose $(_compose_file_args) -p "project" up -d
+_compose_file_args() {
+    echo -n "-f ${DEVBOX_ROOT}/docker-compose.yml"
+    local override="${DEVBOX_CONFIG:+${DEVBOX_CONFIG}/.private/docker-compose.override.yml}"
+    if [ -n "$override" ] && [ -f "$override" ]; then
+        echo -n " -f ${override}"
+    fi
+}
+
 # Find running devbox compose projects. Outputs one project name per line.
 # Uses jq if available, falls back to grep-based parsing.
 _find_devbox_projects() {
@@ -77,12 +87,15 @@ _require_single_project() {
 container_build() {
     ui_info "Building devbox images (this may take several minutes on first run)..."
 
+    local compose_args
+    compose_args="$(_compose_file_args)"
+
     ui_info "[1/3] Building proxy sidecar..."
-    docker compose -f "${DEVBOX_ROOT}/docker-compose.yml" build --progress=auto proxy
+    docker compose $compose_args build --progress=auto proxy
     ui_info "[1/3] Proxy sidecar built."
 
     ui_info "[2/3] Building agent container..."
-    docker compose -f "${DEVBOX_ROOT}/docker-compose.yml" build --progress=auto agent
+    docker compose $compose_args build --progress=auto agent
     ui_info "[2/3] Agent container built."
 
     # Build private overlay if a Dockerfile exists in the private config repo.
@@ -159,12 +172,16 @@ container_start() {
         return 1
     fi
 
+    # Build compose file arguments (includes private override if present).
+    local compose_args
+    compose_args="$(_compose_file_args)"
+
     # Detect if this project's stack is already running.
     local running_projects
     running_projects="$(_find_devbox_projects)"
     if echo "$running_projects" | grep -q "^devbox-${hash}$"; then
         ui_info "Environment already running."
-        docker compose -f "${DEVBOX_ROOT}/docker-compose.yml" \
+        docker compose $compose_args \
             -p "devbox-${hash}" exec agent gosu devbox zsh
         return $?
     fi
@@ -178,7 +195,7 @@ container_start() {
 
     # Start the stack in detached mode.
     ui_info "Starting environment..."
-    docker compose -f "${DEVBOX_ROOT}/docker-compose.yml" \
+    docker compose $compose_args \
         -p "devbox-${hash}" up -d
 
     # Wait for agent container to accept exec sessions.
@@ -187,7 +204,7 @@ container_start() {
     trap 'kill $spinner_pid 2>/dev/null; wait $spinner_pid 2>/dev/null' RETURN
 
     local elapsed=0
-    while ! docker compose -f "${DEVBOX_ROOT}/docker-compose.yml" \
+    while ! docker compose $compose_args \
         -p "devbox-${hash}" exec -T agent true &>/dev/null 2>&1; do
         sleep 1
         elapsed=$((elapsed + 1))
@@ -196,7 +213,7 @@ container_start() {
         if [ $((elapsed % 5)) -eq 0 ]; then
             local container_status
             local ps_json
-            ps_json="$(docker compose -f "${DEVBOX_ROOT}/docker-compose.yml" \
+            ps_json="$(docker compose $compose_args \
                 -p "devbox-${hash}" ps --format json 2>/dev/null || true)"
             if command -v jq &>/dev/null; then
                 container_status="$(echo "$ps_json" | jq -r '
@@ -233,7 +250,7 @@ container_start() {
     trap - RETURN
     printf "\r"
     ui_info "Environment ready."
-    docker compose -f "${DEVBOX_ROOT}/docker-compose.yml" \
+    docker compose $compose_args \
         -p "devbox-${hash}" exec agent gosu devbox zsh
 }
 
@@ -241,14 +258,14 @@ container_start() {
 container_shell() {
     local project
     project="$(_require_single_project)"
-    docker compose -p "$project" exec agent gosu devbox zsh
+    docker compose $(_compose_file_args) -p "$project" exec agent gosu devbox zsh
 }
 
 # Stop the container stack.
 container_stop() {
     local project
     project="$(_require_single_project)"
-    docker compose -p "$project" down
+    docker compose $(_compose_file_args) -p "$project" down
 }
 
 # Show the status of running devbox containers with project details.
@@ -282,7 +299,7 @@ container_status() {
 _container_resource_warnings() {
     local project="$1"
     local stats
-    stats="$(docker compose -p "$project" ps -q agent 2>/dev/null)" || return 0
+    stats="$(docker compose $(_compose_file_args) -p "$project" ps -q agent 2>/dev/null)" || return 0
     [ -z "$stats" ] && return 0
 
     local container_id="$stats"

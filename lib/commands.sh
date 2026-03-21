@@ -333,7 +333,7 @@ cmd_stop() {
         ui_info "Cancelled."
         return 0
     fi
-    docker compose -f "${DEVBOX_ROOT}/docker-compose.yml" -p "$project" down
+    docker compose $(_compose_file_args) -p "$project" down
     ui_info "Container stack stopped."
 }
 
@@ -414,7 +414,7 @@ cmd_profile() {
     trap 'kill $spinner_pid 2>/dev/null; wait $spinner_pid 2>/dev/null' RETURN
 
     local exec_output
-    if ! exec_output="$(docker compose -p "$project" exec \
+    if ! exec_output="$(docker compose $(_compose_file_args) -p "$project" exec \
         -e PROFILE_VARIANT="$variant" \
         agent gosu devbox bash -c 'source "/usr/local/lib/devbox/profiles/$1.sh"' _ "$name" 2>&1)"; then
         kill $spinner_pid 2>/dev/null
@@ -484,7 +484,7 @@ _sqlite3_query() {
         # Fallback: run sqlite3 inside the running container (it has sqlite3).
         local project
         project="$(_require_single_project)" || return 1
-        docker compose -p "$project" exec -T agent \
+        docker compose $(_compose_file_args) -p "$project" exec -T agent \
             sqlite3 -header -column /data/api.db "$query"
     fi
 }
@@ -679,7 +679,7 @@ cmd_resize() {
     export DEVBOX_RELOAD_INTERVAL="${DEVBOX_RELOAD_INTERVAL:-30}"
     export DEVBOX_BRIDGE_SUBNET="${DEVBOX_BRIDGE_SUBNET:-}"
 
-    docker compose -f "${DEVBOX_ROOT}/docker-compose.yml" \
+    docker compose $(_compose_file_args) \
         -p "$project" up -d --force-recreate agent
     ui_info "Resized. Run 'devbox shell' to reconnect."
 }

@@ -19,8 +19,14 @@ set -euo pipefail
 
 DEVBOX_VERSION="0.3.0"
 
-# Resolve the directory where devbox itself is installed.
-DEVBOX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve the directory where devbox itself is installed (follows symlinks).
+_devbox_source="${BASH_SOURCE[0]}"
+while [ -L "$_devbox_source" ]; do
+    _devbox_source="$(readlink "$_devbox_source")"
+    [[ "$_devbox_source" != /* ]] && _devbox_source="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$_devbox_source"
+done
+DEVBOX_ROOT="$(cd "$(dirname "$_devbox_source")" && pwd)"
+unset _devbox_source
 DEVBOX_DATA="${DEVBOX_DATA:-$HOME/.devbox}"
 DEVBOX_CONFIG="${DEVBOX_CONFIG:-$HOME/.config/devbox}"
 

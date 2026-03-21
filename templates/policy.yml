@@ -48,6 +48,12 @@ allowed:
   - proxy.golang.org           # Go module proxy
   - sum.golang.org             # Go checksum database
 
+  # Documentation — AI agents frequently fetch docs for context.
+  - docs.rs                    # Rust crate documentation
+  - doc.rust-lang.org          # Rust language docs
+  - docs.python.org            # Python standard library docs
+  - developer.mozilla.org      # MDN web docs (JS/CSS/HTML)
+
   # System updates — for apt inside container.
   - security.ubuntu.com        # Security patches
   - archive.ubuntu.com         # Package archive

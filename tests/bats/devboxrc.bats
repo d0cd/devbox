@@ -6,10 +6,9 @@ load test_helper
 setup() {
     setup_libs
     stub_devbox_env
-    # CIDR_PATTERN is normally defined by lib/firewall.sh (sourced by devbox).
-    # Define it here since firewall.sh requires iptables (unavailable on host).
-    CIDR_PATTERN='^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$'
-    export CIDR_PATTERN
+    # Source firewall.sh for CIDR_PATTERN and _validate_cidr.
+    # firewall_init() references iptables but we only need the validation helpers.
+    source "${DEVBOX_ROOT}/lib/firewall.sh"
     source "${DEVBOX_ROOT}/lib/commands.sh"
 }
 

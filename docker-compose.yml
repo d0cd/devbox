@@ -19,28 +19,43 @@ services:
       https_proxy: http://proxy:8080
       NO_PROXY: localhost,127.0.0.1,proxy
       no_proxy: localhost,127.0.0.1,proxy
-      NODE_EXTRA_CA_CERTS: /usr/local/share/ca-certificates/mitmproxy-ca-cert.pem
+      NODE_EXTRA_CA_CERTS: /usr/local/share/ca-certificates/mitmproxy-ca.crt
+      DEVBOX_PROJECT: ${DEVBOX_PROJECT_NAME:-workspace}
     env_file:
       # Global secrets, then per-project overrides.
       - ${DEVBOX_SECRETS_FILE:?DEVBOX_SECRETS_FILE must be set by devbox CLI}
       - ${DEVBOX_PROJECT_SECRETS_FILE:?DEVBOX_PROJECT_SECRETS_FILE must be set by devbox CLI}
     volumes:
-      - ${PROJECT_PATH:-.}:/workspace:rw
-      - ${DEVBOX_CONFIG:?DEVBOX_CONFIG must be set by devbox CLI}:/devbox:ro
-      - ${DEVBOX_HISTORY_DIR:-./history}:/data/history
-      - ${DEVBOX_MEMORY_DIR:-./memory}:/home/devbox/.opencode-mem/project
+      - "${PROJECT_PATH:-.}:/workspace:rw"
+      - "${DEVBOX_CONFIG:?DEVBOX_CONFIG must be set by devbox CLI}:/devbox:ro"
+      - "${DEVBOX_PRIVATE_DIR:?DEVBOX_PRIVATE_DIR must be set by devbox CLI}:/devbox/.private:ro"
+      - "${DEVBOX_HISTORY_DIR:-./history}:/data/history"
+      - "${DEVBOX_CLAUDE_DIR:-./claude-data}:/home/devbox/.claude-persist:rw"
+      - "${DEVBOX_MEMORY_DIR:-./memory}:/home/devbox/.opencode-mem/project"
       - devbox-shared-memory:/home/devbox/.opencode-mem/shared
-      - proxy-ca:/usr/local/share/ca-certificates:ro
+      - proxy-ca:/run/proxy-ca:ro
     networks:
       - sandbox
+    read_only: true
     cap_drop:
       - ALL
     cap_add:
       - NET_ADMIN
+      - SETUID
+      - SETGID
     security_opt:
       - no-new-privileges:true
     tmpfs:
       - /tmp:size=256M
+      # User home is tmpfs — populated from /etc/skel by user-setup.sh at startup.
+      # Oh My Zsh lives on the read-only rootfs at /opt/oh-my-zsh.
+      - /home/devbox:size=512M,uid=1000,gid=1000
+      # Entrypoint writes CA cert and runs update-ca-certificates here.
+      - /usr/local/share/ca-certificates:size=1M
+      - /etc/ssl/certs:size=2M
+      # Runtime directories that need write access.
+      - /run:size=16M
+      - /var/log:size=16M
     healthcheck:
       # Verify firewall is active by checking a specific rule exists.
       test: ["CMD", "bash", "-c", "iptables -C OUTPUT -d 127.0.0.11 -p udp --dport 53 -j ACCEPT 2>/dev/null"]
@@ -70,8 +85,8 @@ services:
     tmpfs:
       - /tmp:size=64M
     volumes:
-      - ${DEVBOX_POLICY_FILE:-./templates/policy.yml}:/proxy/policy.yml:ro
-      - ${DEVBOX_LOG_DIR:-./logs}:/data
+      - "${DEVBOX_POLICY_FILE:-./templates/policy.yml}:/proxy/policy.yml:ro"
+      - "${DEVBOX_LOG_DIR:-./logs}:/data"
       - proxy-ca:/ca
     networks:
       - sandbox

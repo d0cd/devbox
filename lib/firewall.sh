@@ -11,13 +11,44 @@ set -euo pipefail
 
 CIDR_PATTERN='^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$'
 
+# Validate that a CIDR string has octets in range (0-255) and prefix <= 32.
+# The regex CIDR_PATTERN checks format; this function checks semantics.
+_validate_cidr() {
+    local cidr="$1"
+    local ip="${cidr%/*}"
+    local prefix="${cidr#*/}"
+    if [ "$prefix" -gt 32 ] 2>/dev/null; then
+        return 1
+    fi
+    local IFS='.'
+    # shellcheck disable=SC2086
+    set -- $ip
+    for octet in "$@"; do
+        if [ "$octet" -gt 255 ] 2>/dev/null; then
+            return 1
+        fi
+    done
+    return 0
+}
+
 firewall_init() {
     echo "[firewall] Initializing iptables rules..."
 
-    # Flush any existing rules (intentional — container should have none).
-    iptables -F OUTPUT
+    # --- INPUT chain: default deny inbound ---
+    # Prevents external connections from reaching services in the container
+    # if network configuration is ever misconfigured.
+    iptables -F INPUT
+    iptables -P INPUT DROP
+    iptables -A INPUT -i lo -j ACCEPT
+    iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 
-    # Default policy: drop all outbound.
+    # --- FORWARD chain: default deny ---
+    # Prevents the container from being used as a network gateway.
+    iptables -F FORWARD
+    iptables -P FORWARD DROP
+
+    # --- OUTPUT chain: default deny outbound ---
+    iptables -F OUTPUT
     iptables -P OUTPUT DROP
 
     # Allow loopback (localhost communication).
@@ -30,7 +61,7 @@ firewall_init() {
     # DEVBOX_BRIDGE_SUBNET is set by the entrypoint after detecting the
     # actual network. Falls back to Docker's default range.
     local bridge_subnet="${DEVBOX_BRIDGE_SUBNET:-172.17.0.0/16}"
-    if [[ ! "$bridge_subnet" =~ $CIDR_PATTERN ]]; then
+    if [[ ! "$bridge_subnet" =~ $CIDR_PATTERN ]] || ! _validate_cidr "$bridge_subnet"; then
         echo "[firewall] FATAL: Invalid bridge subnet CIDR: '$bridge_subnet'"
         return 1
     fi
@@ -42,22 +73,34 @@ firewall_init() {
     iptables -A OUTPUT -d 127.0.0.11 -p udp --dport 53 -j ACCEPT
     iptables -A OUTPUT -d 127.0.0.11 -p tcp --dport 53 -j ACCEPT
 
-    echo "[firewall] IPv4 rules applied."
+    # Block ICMP — prevents covert channels and network reconnaissance.
+    iptables -A OUTPUT -p icmp -j DROP
 
-    # Block IPv6 if ip6tables is available (prevents bypass via IPv6 if enabled).
-    # All-or-nothing: if flush or policy DROP fails, skip all IPv6 rules to avoid
-    # inconsistent state (flushed chain with ACCEPT policy).
+    echo "[firewall] IPv4 rules applied (INPUT/FORWARD/OUTPUT)."
+
+    # --- IPv6: fail-closed ---
+    # Block all IPv6 to prevent bypass. If ip6tables setup fails, the entire
+    # firewall init fails — we refuse to run with partial enforcement.
     if command -v ip6tables &>/dev/null; then
-        if ip6tables -F OUTPUT 2>/dev/null && ip6tables -P OUTPUT DROP 2>/dev/null; then
-            ip6tables -A OUTPUT -o lo -j ACCEPT 2>/dev/null || true
-            ip6tables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
-            echo "[firewall] IPv6 rules applied (all outbound dropped)."
+        if ip6tables -F OUTPUT && ip6tables -P OUTPUT DROP; then
+            ip6tables -A OUTPUT -o lo -j ACCEPT \
+                || echo "[firewall] WARN: IPv6 loopback rule failed (non-fatal)"
+            ip6tables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT \
+                || echo "[firewall] WARN: IPv6 conntrack rule failed (non-fatal)"
+            ip6tables -F INPUT && ip6tables -P INPUT DROP \
+                || echo "[firewall] WARN: IPv6 INPUT chain setup failed (non-fatal)"
+            ip6tables -A INPUT -i lo -j ACCEPT 2>/dev/null || true
+            ip6tables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+            ip6tables -F FORWARD && ip6tables -P FORWARD DROP \
+                || echo "[firewall] WARN: IPv6 FORWARD chain setup failed (non-fatal)"
+            echo "[firewall] IPv6 rules applied (all chains locked down)."
         else
-            echo "[firewall] WARNING: IPv6 firewall rules failed — IPv6 traffic may bypass the firewall."
+            echo "[firewall] FATAL: IPv6 firewall rules failed — refusing to start with partial enforcement."
+            return 1
         fi
     fi
 
-    echo "[firewall] All direct outbound blocked except Docker bridge."
+    echo "[firewall] All chains locked down. Egress only via proxy bridge."
 
     # Verify a known rule exists — confirms firewall setup completed.
     if ! iptables -C OUTPUT -d 127.0.0.11 -p udp --dport 53 -j ACCEPT 2>/dev/null; then

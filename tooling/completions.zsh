@@ -8,8 +8,9 @@
 _devbox() {
     local -a commands
     commands=(
-        'shell:Open a shell into running environment'
-        'stop:Stop the running container stack'
+        'start:Start a new session (devbox start [path])'
+        'resume:Shell into a running session (devbox resume [name])'
+        'stop:Stop a session (devbox stop [name])'
         'status:Show running sessions'
         'info:Show container status and project info'
         'profile:Install a language profile'

@@ -5,7 +5,7 @@
 # DEVBOX_DATA, DEVBOX_CONFIG, and DEVBOX_VERSION to be set.
 set -euo pipefail
 
-# CIDR_PATTERN is defined in lib/firewall.sh and sourced by the main devbox script.
+# CIDR_PATTERN and _validate_cidr are defined in lib/firewall.sh, sourced by the devbox entry point.
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -17,7 +17,7 @@ _load_devboxrc() {
     local rc_file="${1:-.}/.devboxrc"
     [ -f "$rc_file" ] || return 0
 
-    local allowed_vars="DEVBOX_BRIDGE_SUBNET DEVBOX_RELOAD_INTERVAL DEVBOX_PRIVATE_CONFIGS DEVBOX_MEMORY DEVBOX_CPUS"
+    local allowed_vars="DEVBOX_BRIDGE_SUBNET DEVBOX_RELOAD_INTERVAL DEVBOX_PRIVATE_CONFIGS DEVBOX_MEMORY DEVBOX_CPUS DEVBOX_NAME"
     local line_num=0
     while IFS= read -r line || [ -n "$line" ]; do
         line_num=$((line_num + 1))
@@ -52,10 +52,10 @@ _load_devboxrc() {
                 fi
                 ;;
             DEVBOX_BRIDGE_SUBNET)
-                # CIDR_PATTERN is defined in lib/firewall.sh; inline it here to
-                # avoid sourcing firewall.sh on the host (it references iptables).
-                if [[ ! "$value" =~ $CIDR_PATTERN ]]; then
-                    ui_warn ".devboxrc:${line_num}: '${key}' must be CIDR notation, skipping"
+                # CIDR_PATTERN and _validate_cidr are defined in lib/firewall.sh,
+                # sourced by the main devbox script.
+                if [[ ! "$value" =~ $CIDR_PATTERN ]] || ! _validate_cidr "$value"; then
+                    ui_warn ".devboxrc:${line_num}: '${key}' must be valid CIDR notation, skipping"
                     continue
                 fi
                 ;;
@@ -78,6 +78,13 @@ _load_devboxrc() {
                 # Decimal CPU count (e.g., 2, 4.0, 0.5).
                 if [[ ! "$value" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
                     ui_warn ".devboxrc:${line_num}: '${key}' must be a CPU count (e.g., 2, 4.0), skipping"
+                    continue
+                fi
+                ;;
+            DEVBOX_NAME)
+                # Project name: alphanumeric, hyphens, underscores, max 32 chars.
+                if [[ ! "$value" =~ ^[a-zA-Z0-9_-]{1,32}$ ]]; then
+                    ui_warn ".devboxrc:${line_num}: '${key}' must be alphanumeric/hyphens/underscores (max 32 chars), skipping"
                     continue
                 fi
                 ;;
@@ -114,6 +121,53 @@ resolve_project_path() {
     fi
 }
 
+# Read the stored project name for a hash. Falls back to basename of .project_path.
+_project_name_for_hash() {
+    local hash="$1"
+    local dir="${DEVBOX_DATA}/${hash}"
+    if [ -f "${dir}/.project_name" ]; then
+        cat "${dir}/.project_name"
+    elif [ -f "${dir}/.project_path" ]; then
+        basename "$(cat "${dir}/.project_path")"
+    else
+        echo "$hash"
+    fi
+}
+
+# Look up a project hash by name. Scans all known projects.
+# Returns the hash if found, empty string if not.
+_hash_for_project_name() {
+    local target_name="$1"
+    for dir in "${DEVBOX_DATA}"/*/; do
+        [ -d "$dir" ] || continue
+        local hash
+        hash="$(basename "$dir")"
+        # Skip non-hash directories (secrets, claude-data).
+        [[ "$hash" =~ ^[0-9a-f]{16}$ ]] || continue
+        local name
+        name="$(_project_name_for_hash "$hash")"
+        if [ "$name" = "$target_name" ]; then
+            echo "$hash"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Build the compose project name from a name and hash.
+_compose_project_name() {
+    local name="$1" hash="$2"
+    echo "devbox-${name}-${hash}"
+}
+
+# Extract the hash from a compose project name.
+# Handles both new format (devbox-name-hash) and old format (devbox-hash).
+_hash_from_compose_project() {
+    local project="$1"
+    # Hash is always the last 16 hex chars.
+    echo "${project: -16}"
+}
+
 # Get the policy file path for the current or specified project.
 get_policy_file() {
     local project_path
@@ -147,12 +201,17 @@ ensure_project_dirs() {
         "${project_dir}/history" \
         "${project_dir}/logs" \
         "${project_dir}/memory"
-    (umask 077 && mkdir -p "${project_dir}/secrets")
+    (umask 077 && mkdir -p "${project_dir}/secrets" "${project_dir}/claude-data")
 
     # Copy default policy if none exists for this project.
+    # Private configs policy takes precedence over the built-in template.
     # Restrictive permissions prevent other users from weakening the allowlist.
     if [ ! -f "${project_dir}/policy.yml" ]; then
-        (umask 077 && cp "${DEVBOX_ROOT}/templates/policy.yml" "${project_dir}/policy.yml")
+        local policy_source="${DEVBOX_ROOT}/templates/policy.yml"
+        if [ -f "${DEVBOX_CONFIG}/.private/policy.yml" ]; then
+            policy_source="${DEVBOX_CONFIG}/.private/policy.yml"
+        fi
+        (umask 077 && cp "$policy_source" "${project_dir}/policy.yml")
         ui_info "Created default network policy for project"
     fi
 
@@ -168,15 +227,17 @@ ENVEOF
         )
     fi
 
-    # Record the project path for later identification (e.g., devbox status).
+    # Record the project path and name for later identification.
     if [ -n "$project_path" ]; then
         echo "$project_path" >"${project_dir}/.project_path"
+        local name="${DEVBOX_NAME:-$(basename "$project_path")}"
+        echo "$name" >"${project_dir}/.project_name"
     fi
 }
 
 # Ensure global devbox directories exist.
 ensure_global_dirs() {
-    (umask 077 && mkdir -p "${DEVBOX_DATA}/secrets")
+    (umask 077 && mkdir -p "${DEVBOX_DATA}/secrets" "${DEVBOX_DATA}/claude-data")
     mkdir -p "${DEVBOX_CONFIG}"
 
     # Create a placeholder secrets file if none exists.
@@ -211,15 +272,21 @@ ENVEOF
         esac
     fi
 
+    # Auto-inject GH_TOKEN from host's gh CLI if not already set.
+    # This avoids manual `devbox secrets set GH_TOKEN ...` for users with gh installed.
+    local secrets_file="${DEVBOX_DATA}/secrets/.env"
+    if ! grep -q '^GH_TOKEN=' "$secrets_file" 2>/dev/null; then
+        local gh_token
+        if gh_token="$(gh auth token 2>/dev/null)" && [ -n "$gh_token" ]; then
+            (umask 077 && echo "GH_TOKEN=${gh_token}" >>"$secrets_file")
+            ui_info "Injected GH_TOKEN from host gh CLI."
+        fi
+    fi
+
     # Deploy OpenCode config directory (includes opencode.json, pal/, skills/, agents/).
     if [ -d "${DEVBOX_ROOT}/config/opencode" ] && [ ! -d "${DEVBOX_CONFIG}/opencode" ]; then
         cp -r "${DEVBOX_ROOT}/config/opencode" "${DEVBOX_CONFIG}/opencode"
         ui_info "Deployed OpenCode configuration to ${DEVBOX_CONFIG}/opencode/"
-    fi
-
-    # Notify about private Dockerfile overlay if available.
-    if [ -f "${DEVBOX_CONFIG}/.private/Dockerfile" ]; then
-        ui_info "Private Dockerfile detected. Will apply overlay on next build."
     fi
 
     # Sync private configs if DEVBOX_PRIVATE_CONFIGS is set.
@@ -291,9 +358,36 @@ sync_private_configs() {
 # Commands
 # ---------------------------------------------------------------------------
 
+# Resolve an argument to a project path. Accepts:
+#   - empty (uses cwd)
+#   - a directory path
+#   - a project name (looks up stored .project_path)
+_resolve_project_arg() {
+    local arg="${1:-}"
+    if [ -z "$arg" ] || [ -d "$arg" ]; then
+        resolve_project_path "${arg:-.}"
+    else
+        # Try as a project name.
+        local hash
+        if hash="$(_hash_for_project_name "$arg")" && [ -n "$hash" ]; then
+            local path
+            path="$(cat "${DEVBOX_DATA}/${hash}/.project_path" 2>/dev/null || echo "")"
+            if [ -n "$path" ] && [ -d "$path" ]; then
+                echo "$path"
+            else
+                ui_error "Project '${arg}' was at ${path:-unknown}, but the directory no longer exists."
+                return 1
+            fi
+        else
+            ui_error "Not a directory or known project: ${arg}"
+            return 1
+        fi
+    fi
+}
+
 cmd_start() {
     local project_path
-    project_path="$(resolve_project_path "${1:-}")"
+    project_path="$(_resolve_project_arg "${1:-}")"
     local hash
     hash="$(project_hash "$project_path")"
 
@@ -316,23 +410,28 @@ cmd_start() {
 }
 
 cmd_shell() {
-    container_shell
+    container_shell "${1:-}"
 }
 
 cmd_stop() {
+    local target_name="${1:-}"
     # Show which session will be stopped for clarity.
     local project
-    project="$(_require_single_project)" || return 1
-    local project_label="$project"
-    # Try to resolve the human-readable project path from stored data.
-    local hash="${project#devbox-}"
+    project="$(_require_single_project "$target_name")" || return 1
+    local hash
+    hash="$(_hash_from_compose_project "$project")"
+    local name
+    name="$(_project_name_for_hash "$hash")"
+    local path_label=""
     if [ -f "${DEVBOX_DATA}/${hash}/.project_path" ]; then
-        project_label="$(cat "${DEVBOX_DATA}/${hash}/.project_path") ($project)"
+        path_label="$(cat "${DEVBOX_DATA}/${hash}/.project_path")"
+        path_label="${path_label/#$HOME/\~}"
     fi
-    if ! ui_confirm "Stop session: ${project_label}?"; then
+    if ! ui_confirm "Stop session: ${name} (${path_label:-unknown})?"; then
         ui_info "Cancelled."
         return 0
     fi
+    _export_compose_env "$project"
     docker compose $(_compose_file_args) -p "$project" down
     ui_info "Container stack stopped."
 }
@@ -407,6 +506,7 @@ cmd_profile() {
     # Execute profile inside running container using positional args (no injection).
     local project
     project="$(_require_single_project)"
+    _export_compose_env "$project"
     ui_info "Installing profile '$name' in running container..."
 
     ui_spinner "Installing profile '$name' (this may take several minutes)..." &
@@ -417,22 +517,18 @@ cmd_profile() {
     if ! exec_output="$(docker compose $(_compose_file_args) -p "$project" exec \
         -e PROFILE_VARIANT="$variant" \
         agent gosu devbox bash -c 'source "/usr/local/lib/devbox/profiles/$1.sh"' _ "$name" 2>&1)"; then
-        kill $spinner_pid 2>/dev/null
-        wait $spinner_pid 2>/dev/null
+        _stop_spinner $spinner_pid
         trap - RETURN
-        printf "\r"
         ui_error "Profile '$name' installation failed."
         if [ -n "$exec_output" ]; then
             echo "$exec_output" | tail -20 >&2
         fi
-        ui_info "Run 'devbox shell' to inspect the container for errors."
+        ui_info "Run 'devbox resume' to inspect the container for errors."
         return 1
     fi
 
-    kill $spinner_pid 2>/dev/null
-    wait $spinner_pid 2>/dev/null
+    _stop_spinner $spinner_pid
     trap - RETURN
-    printf "\r"
     ui_info "Profile '$name' installed successfully."
 }
 
@@ -484,6 +580,7 @@ _sqlite3_query() {
         # Fallback: run sqlite3 inside the running container (it has sqlite3).
         local project
         project="$(_require_single_project)" || return 1
+        _export_compose_env "$project"
         docker compose $(_compose_file_args) -p "$project" exec -T agent \
             sqlite3 -header -column /data/api.db "$query"
     fi
@@ -649,7 +746,8 @@ cmd_resize() {
 
     local project
     project="$(_require_single_project)" || return 1
-    local hash="${project#devbox-}"
+    local hash
+    hash="$(_hash_from_compose_project "$project")"
 
     local cpus_label="$DEVBOX_CPUS"
     ui_info "Resizing to ${memory} RAM, ${cpus_label} CPUs..."
@@ -661,27 +759,15 @@ cmd_resize() {
     fi
 
     # Re-export all compose variables so the stack can restart.
-    local project_path=""
-    if [ -f "${DEVBOX_DATA}/${hash}/.project_path" ]; then
-        project_path="$(cat "${DEVBOX_DATA}/${hash}/.project_path")"
+    _export_compose_env "$project"
+    export DEVBOX_MEMORY="$memory"
+    if [ -n "$cpus" ]; then
+        export DEVBOX_CPUS="$cpus"
     fi
-
-    export PROJECT_PATH="${project_path:-.}"
-    export PROJECT_HASH="$hash"
-    local project_dir="${DEVBOX_DATA}/${hash}"
-    export DEVBOX_POLICY_FILE="${project_dir}/policy.yml"
-    export DEVBOX_LOG_DIR="${project_dir}/logs"
-    export DEVBOX_MEMORY_DIR="${project_dir}/memory"
-    export DEVBOX_HISTORY_DIR="${project_dir}/history"
-    export DEVBOX_SECRETS_FILE="${DEVBOX_DATA}/secrets/.env"
-    export DEVBOX_PROJECT_SECRETS_FILE="${project_dir}/secrets/.env"
-    export DEVBOX_CONFIG
-    export DEVBOX_RELOAD_INTERVAL="${DEVBOX_RELOAD_INTERVAL:-30}"
-    export DEVBOX_BRIDGE_SUBNET="${DEVBOX_BRIDGE_SUBNET:-}"
 
     docker compose $(_compose_file_args) \
         -p "$project" up -d --force-recreate agent
-    ui_info "Resized. Run 'devbox shell' to reconnect."
+    ui_info "Resized. Run 'devbox resume' to reconnect."
 }
 
 cmd_rebuild() {
@@ -750,9 +836,10 @@ cmd_help() {
 devbox v${DEVBOX_VERSION} — isolated containerized development environment
 
 USAGE:
-  devbox [project-path]    Start environment and open shell (default: current dir)
-  devbox shell             Open another shell into running environment
-  devbox stop              Stop the running container stack
+  devbox [project-path]    Start or resume environment (default: current dir)
+  devbox start [path]      Explicitly start a new session
+  devbox resume [name]     Shell into a running session by name
+  devbox stop [name]       Stop a session
   devbox status            Show running sessions
   devbox info              Show container status and project info
   devbox profile [name]    Install a language profile (interactive if no name)
@@ -787,7 +874,7 @@ USAGE:
 WORKFLOW:
   The container is an isolated dev environment. Start it once, then exec in:
     devbox                   # First pane — starts environment + shell
-    devbox shell             # Additional panes — shell into running env
+    devbox resume ralph      # Additional panes — shell in by name
   Inside the container, run any tool directly:
     claude                   # Claude Code session
     opencode                 # OpenCode session (with PAL MCP dispatch)

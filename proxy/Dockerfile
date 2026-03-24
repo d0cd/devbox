@@ -10,14 +10,17 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system mitmproxy==12.2.1 pyyaml==6.0.3
 
 # Create non-root user for running the proxy.
-RUN groupadd -r devbox && useradd -r -g devbox -d /home/devbox -s /bin/bash devbox
+RUN groupadd -g 1000 devbox && useradd -u 1000 -g devbox -d /home/devbox -s /bin/bash devbox
 
 COPY enforcer.py logger.py /proxy/
 
 # /data is where the SQLite API log is written.
 # /ca is the shared volume for CA certs.
 # /home/devbox/.mitmproxy stores the generated CA keypair.
+# Seed volume dirs with a file so Docker copies ownership into named volumes.
+# (Docker only initializes volume ownership when there are files to copy.)
 RUN mkdir -p /data /ca /home/devbox/.mitmproxy \
+    && touch /ca/.keep /data/.keep \
     && chown -R devbox:devbox /data /ca /home/devbox/.mitmproxy /proxy
 
 EXPOSE 8080

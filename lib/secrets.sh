@@ -30,6 +30,8 @@ cmd_secrets() {
             return 1
         fi
     else
+        # Ensure global secrets directory exists (first run may not have one yet).
+        (umask 077 && mkdir -p "${DEVBOX_DATA}/secrets")
         secrets_file="${DEVBOX_DATA}/secrets/.env"
     fi
 
@@ -73,15 +75,23 @@ cmd_secrets() {
                 return 1
             fi
             # Update existing key or append.
+            # Use flock where available to prevent concurrent modifications.
             if grep -q "^${key}=" "$secrets_file" 2>/dev/null; then
                 local tmpfile
-                tmpfile="$(mktemp)"
+                tmpfile="$(mktemp)" || { ui_error "Cannot create temp file"; return 1; }
                 trap 'rm -f "$tmpfile"' RETURN
-                awk -v k="$key" -v v="$value" -F= '{
-                    if ($1 == k) print k "=" v
-                    else print $0
-                }' "$secrets_file" >"$tmpfile"
-                (umask 077 && mv "$tmpfile" "$secrets_file")
+                (
+                    if command -v flock &>/dev/null; then
+                        flock -w 5 9 || { ui_error "Failed to acquire secrets file lock."; exit 1; }
+                    fi
+                    # Replace matching line. Avoids -F= which breaks values containing '='.
+                    awk -v k="$key" -v v="$value" '{
+                        i = index($0, "=")
+                        if (i > 0 && substr($0, 1, i-1) == k) print k "=" v
+                        else print $0
+                    }' "$secrets_file" >"$tmpfile"
+                    (umask 077 && mv "$tmpfile" "$secrets_file")
+                ) 9>"${secrets_file}.lock" || return 1
                 trap - RETURN
                 ui_info "Updated ${key} in secrets."
             else
@@ -109,10 +119,15 @@ cmd_secrets() {
                 return 0
             fi
             local tmpfile
-            tmpfile="$(mktemp)"
+            tmpfile="$(mktemp)" || { ui_error "Cannot create temp file"; return 1; }
             trap 'rm -f "$tmpfile"' RETURN
-            grep -v "^${key}=" "$secrets_file" >"$tmpfile"
-            (umask 077 && mv "$tmpfile" "$secrets_file")
+            (
+                if command -v flock &>/dev/null; then
+                    flock -w 5 9 || { ui_error "Failed to acquire secrets file lock."; exit 1; }
+                fi
+                grep -v "^${key}=" "$secrets_file" >"$tmpfile"
+                (umask 077 && mv "$tmpfile" "$secrets_file")
+            ) 9>"${secrets_file}.lock" || return 1
             trap - RETURN
             ui_info "Removed ${key} from secrets."
             ;;

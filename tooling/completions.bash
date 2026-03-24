@@ -10,7 +10,7 @@ _devbox_completions() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD - 1]}"
 
-    local commands="shell stop status info profile allowlist secrets logs clean resize rebuild update completions help version"
+    local commands="start resume stop status info profile allowlist secrets logs clean resize rebuild update completions help version"
 
     case "$prev" in
         devbox)

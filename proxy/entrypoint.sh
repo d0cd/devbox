@@ -11,7 +11,7 @@ set -euo pipefail
     }
     if [ ! -f /ca/mitmproxy-ca-cert.pem ]; then
         echo "[proxy] Generating mitmproxy CA certificate (may take up to 30s)..."
-        # Run mitmproxy briefly to generate the CA cert, then copy it out.
+        # Run mitmproxy briefly to generate the CA keypair, then copy cert out.
         mitmdump --set confdir=/home/devbox/.mitmproxy -q &
         MITM_PID=$!
 
@@ -34,8 +34,15 @@ set -euo pipefail
             exit 1
         fi
 
+        # Export cert AND full keypair to the shared volume so restarts reuse the same CA.
         cp /home/devbox/.mitmproxy/mitmproxy-ca-cert.pem /ca/mitmproxy-ca-cert.pem
+        cp /home/devbox/.mitmproxy/mitmproxy-ca.pem /ca/mitmproxy-ca.pem
         echo "[proxy] CA certificate exported to /ca/mitmproxy-ca-cert.pem"
+    else
+        # Reuse existing CA keypair from the shared volume.
+        cp /ca/mitmproxy-ca.pem /home/devbox/.mitmproxy/mitmproxy-ca.pem
+        cp /ca/mitmproxy-ca-cert.pem /home/devbox/.mitmproxy/mitmproxy-ca-cert.pem
+        echo "[proxy] Reusing existing CA certificate from /ca/"
     fi
 ) 200>/ca/.ca-lock
 

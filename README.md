@@ -35,11 +35,23 @@ Each project runs in its own Docker container with strict network enforcement, f
 git clone https://github.com/d0cd/devbox.git ~/.local/share/devbox
 ln -sf ~/.local/share/devbox/devbox ~/.local/bin/devbox
 
-# Configure API keys
-devbox secrets set ANTHROPIC_API_KEY sk-ant-...
-devbox secrets set OPENROUTER_API_KEY sk-or-...
+# Configure credentials
 devbox secrets set GIT_AUTHOR_NAME "Your Name"
 devbox secrets set GIT_AUTHOR_EMAIL you@example.com
+
+# Claude Code auth (choose one):
+#   Option A: Claude Max/Pro subscription (recommended)
+#   Run /login inside the container on first use. Auth persists across restarts.
+#   Option B: API key (pay-per-token via Console)
+devbox secrets set ANTHROPIC_API_KEY sk-ant-...
+
+# GitHub auth (auto-detected if `gh` is installed, or set manually)
+devbox secrets set GH_TOKEN ghp_...
+
+# Optional: other AI tool keys
+devbox secrets set OPENROUTER_API_KEY sk-or-...
+devbox secrets set GEMINI_API_KEY AIza...
+devbox secrets set OPENAI_API_KEY sk-...
 
 # Enable tab completion
 source <(devbox completions)
@@ -55,7 +67,7 @@ The container is an isolated dev environment. Start it once, then exec in from m
 
 ```bash
 devbox                    # First pane — starts environment + opens shell
-devbox shell              # Additional panes — shell into running env
+devbox resume ralph       # Additional panes — shell into running "ralph" by name
 ```
 
 Inside the container, run any tool directly:
@@ -73,9 +85,10 @@ All tools share the same firewall, proxy, API logging, and secrets.
 ## Usage
 
 ```bash
-devbox [project-path]      # Start environment (default: current directory)
-devbox shell               # Open another shell into running environment
-devbox stop                # Stop the container stack
+devbox [project-path]      # Start or resume environment (default: current dir)
+devbox start [path]        # Explicitly start a new session
+devbox resume [name]       # Shell into a running session by name
+devbox stop [name]         # Stop a session
 devbox status              # Show running sessions
 devbox info                # Show container status and project info
 devbox profile rust        # Install a language profile
@@ -109,11 +122,12 @@ devbox help                # Show help and usage info
 
 ## Secrets Management
 
-API keys and credentials are managed via `devbox secrets`, never baked into images:
+Credentials are managed via `devbox secrets`, never baked into images:
 
 ```bash
 # Global secrets (shared across all projects)
-devbox secrets set ANTHROPIC_API_KEY sk-ant-...
+devbox secrets set ANTHROPIC_AUTH_TOKEN <token>   # Claude Max/Pro (from `claude setup-token`)
+devbox secrets set GH_TOKEN ghp_...               # GitHub (auto-detected from `gh` if installed)
 devbox secrets show
 
 # Per-project secrets (override global for one project)
@@ -123,6 +137,17 @@ devbox secrets show --project
 ```
 
 Per-project secrets are layered on top of global secrets. If the same key exists in both, the per-project value takes precedence.
+
+### Credential inheritance
+
+devbox auto-detects host credentials where possible:
+
+| Credential | How | Manual step? |
+|---|---|---|
+| Claude Code (Max/Pro) | Run `/login` inside container on first use | One-time per project (persisted) |
+| GitHub (`GH_TOKEN`) | Auto-extracted from host `gh auth` at startup | None if `gh` is installed |
+| Git identity | From `devbox secrets set GIT_AUTHOR_NAME/EMAIL` | One-time setup |
+| Other AI keys | From `devbox secrets set` | One-time setup |
 
 To start devbox without any API keys (for non-AI workflows): `DEVBOX_NO_SECRETS=1 devbox`
 
@@ -158,17 +183,16 @@ A template Dockerfile is provided at `templates/private-overlay.Dockerfile` — 
 
 1. **Link or clone** — on `devbox start`, a local directory is symlinked (or a git repo is cloned) to `~/.config/devbox/.private/` on the host. This never touches the public devbox repo.
 
-2. **Build** (optional) — if your repo contains a `Dockerfile`, `devbox rebuild` layers it on top of the base image. This is where heavy installs like nvim plugins get cached:
+2. **Build** (optional) — if your repo contains a `Dockerfile`, `devbox rebuild` layers it on top of the base image. The build context is the **parent** of `.private/` (i.e., `~/.config/devbox/`), so COPY paths reference sibling directories directly:
 
     ```dockerfile
     FROM devbox-agent:latest
-    COPY --chown=devbox:devbox nvim/ /home/devbox/.config/nvim/
-    COPY --chown=devbox:devbox tmux/ /home/devbox/.config/tmux/
-    COPY --chown=devbox:devbox .zshrc /home/devbox/.zshrc
-    RUN gosu devbox nvim --headless "+Lazy! sync" +qa 2>/dev/null || true
+    # Install zsh theme/plugins (cached in image layer).
+    RUN git clone --depth=1 https://github.com/romkatv/powerlevel10k.git \
+            /home/devbox/.oh-my-zsh/custom/themes/powerlevel10k
     ```
 
-    Docker caches each layer — plugins only reinstall when `lazy-lock.json` changes.
+    Config files (nvim, tmux, claude, zshrc) don't need to be baked in — they're overlaid at startup from the read-only mount.
 
 3. **Startup overlay** — every `devbox start` copies configs from the read-only mount into the container's home, so edits to your configs repo take effect immediately (without rebuilding the image).
 
@@ -214,7 +238,7 @@ Docker-managed volumes (not on host filesystem):
 
 | Volume | Container path | Purpose |
 |--------|---------------|---------|
-| `proxy-ca` | `/usr/local/share/ca-certificates` (ro) | Shared mitmproxy CA certificate |
+| `proxy-ca` | `/run/proxy-ca` (agent, ro) and `/ca` (proxy, rw) | Shared mitmproxy CA certificate |
 | `devbox-shared-memory` | `~/.opencode-mem/shared` | Cross-project OpenCode memory |
 
 ## API Observability
@@ -332,11 +356,11 @@ rm -f ~/.local/bin/devbox
 1. **"Docker is not running"** — Start Docker Desktop or the Docker daemon (`sudo systemctl start docker`).
 2. **"Firewall initialization failed"** — Update Docker Desktop to latest. Verify the container has `NET_ADMIN` capability.
 3. **"Proxy CA cert not found"** — Run `devbox rebuild` to regenerate the shared CA volume.
-4. **HTTPS certificate errors inside container** — Check that `/usr/local/share/ca-certificates/mitmproxy-ca-cert.pem` exists. If not, restart the stack (`devbox stop && devbox`).
+4. **HTTPS certificate errors inside container** — Check that `/usr/local/share/ca-certificates/mitmproxy-ca.crt` exists. If not, restart the stack (`devbox stop && devbox`).
 5. **"No API log found"** — Start a devbox session first to generate logs.
-6. **Container won't start** — Run `docker compose -p devbox-<hash> logs` to inspect.
-7. **Profile install fails** — Run `devbox shell` to inspect the container. Check network connectivity through the proxy.
-8. **Requests fail to an allowed domain** — Verify the domain is in the allowlist (`devbox allowlist`). Check proxy logs (`docker compose -p devbox-<hash> logs proxy`). Ensure the proxy CA cert is installed (`ls /usr/local/share/ca-certificates/mitmproxy-ca-cert.pem` inside the container).
+6. **Container won't start** — Run `docker compose -p devbox-<name>-<hash> logs` to inspect (find the name with `devbox status`).
+7. **Profile install fails** — Run `devbox <name>` to shell into the container. Check network connectivity through the proxy.
+8. **Requests fail to an allowed domain** — Verify the domain is in the allowlist (`devbox allowlist`). Check proxy logs. Ensure the proxy CA cert is installed (`ls /usr/local/share/ca-certificates/mitmproxy-ca.crt` inside the container).
 
 ## License
 

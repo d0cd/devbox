@@ -90,6 +90,11 @@ mkdir -p "$HOME/.config/devbox"
 # --- Build images ---
 ui_info "Building devbox container images (this may take a few minutes)..."
 cd "$INSTALL_DIR"
+# Set compose variables required for file parsing (not used during build).
+export DEVBOX_SECRETS_FILE="${HOME}/.devbox/secrets/.env"
+export DEVBOX_PROJECT_SECRETS_FILE="/dev/null"
+export DEVBOX_CONFIG="${HOME}/.config/devbox"
+export PROJECT_PATH="."
 if ! docker compose build; then
     ui_error "Docker image build failed."
     ui_info "Common fixes:"

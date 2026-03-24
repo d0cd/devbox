@@ -8,6 +8,8 @@ version: "1"
 allowed:
   # Model APIs — required for AI tools (claude, opencode, gemini, codex).
   - api.anthropic.com          # Claude API
+  - claude.ai                  # Claude Code authentication
+  - platform.claude.com        # Claude Code authentication (Console)
   - openrouter.ai              # OpenRouter (multi-model gateway)
   - generativelanguage.googleapis.com  # Gemini API
   - api.openai.com             # OpenAI / Codex API

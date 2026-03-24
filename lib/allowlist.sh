@@ -116,7 +116,7 @@ _allowlist_add_bulk() {
         done
 
         if [ "$added" -gt 0 ]; then
-            mv "$tmpfile" "$policy_file"
+            (umask 077 && mv "$tmpfile" "$policy_file")
             _reload_message
         else
             rm -f "$tmpfile"
@@ -173,7 +173,7 @@ _allowlist_remove_inner() {
     ${_AWK_STRIP_DOMAIN}
     { if (line != d) print \$0 }
     " "$policy_file" >"$tmpfile"
-    mv "$tmpfile" "$policy_file"
+    (umask 077 && mv "$tmpfile" "$policy_file")
     trap - RETURN
 
     ui_info "Removed '$domain' from allowlist."

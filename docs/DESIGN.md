@@ -24,148 +24,446 @@ devbox builds on three open-source projects (all MIT-licensed):
 
 ## Architecture
 
+### System Overview
+
 ```
-Host (tmux, your workflow)
+Host (macOS / Linux)
     │
-    ├── devbox start          # starts environment
-    ├── devbox shell          # exec into container (multiple panes)
+    ├── devbox CLI (bash)           ← orchestration, secrets, allowlist
+    │     │
+    │     ├── Docker Compose
+    │     │     │
+    │     │     ▼
+    │     │   ┌─────────────────────────────────────────────────┐
+    │     │   │  sandbox network (internal: true)               │
+    │     │   │                                                 │
+    │     │   │  ┌───────────────────────────────────────────┐  │
+    │     │   │  │ Agent Container (per-project)             │  │
+    │     │   │  │                                           │  │
+    │     │   │  │  Tools: claude, opencode, nvim, gemini,   │  │
+    │     │   │  │         codex, gh, zsh, tmux              │  │
+    │     │   │  │                                           │  │
+    │     │   │  │  iptables: OUTPUT → DROP                  │  │
+    │     │   │  │    except → bridge:8080 (proxy)           │  │
+    │     │   │  │    except → 127.0.0.11:53 (DNS)           │  │
+    │     │   │  │                                           │  │
+    │     │   │  │  Mounts:                                  │  │
+    │     │   │  │    /workspace ← project dir (rw)          │  │
+    │     │   │  │    /devbox   ← global config (ro)         │  │
+    │     │   │  └──────────────┬────────────────────────────┘  │
+    │     │   │                 │ HTTP_PROXY / HTTPS_PROXY      │
+    │     │   │                 ▼                               │
+    │     │   │  ┌───────────────────────────────────────────┐  │
+    │     │   │  │ Proxy Sidecar                             │  │
+    │     │   │  │                                           │  │
+    │     │   │  │  mitmproxy:8080                           │  │
+    │     │   │  │    ├── enforcer.py (allowlist)             │  │
+    │     │   │  │    └── logger.py   (SQLite)               │  │
+    │     │   │  │                                           │  │
+    │     │   │  │  Mounts:                                  │  │
+    │     │   │  │    /proxy/policy.yml ← allowlist (ro)     │  │
+    │     │   │  │    /data/api.db     ← API log (rw)        │  │
+    │     │   │  └───────────────────────────────────────────┘  │
+    │     │   │                 │                               │
+    │     │   └─────────────────┼───────────────────────────────┘
+    │     │                     │
+    │     │   ┌─────────────────▼───────────────────────────────┐
+    │     │   │  external network                               │
+    │     │   │  (proxy only — internet access)                 │
+    │     │   └─────────────────────────────────────────────────┘
+    │     │
+    │     └── devbox logs, devbox allowlist, devbox secrets
+    │           ↕ direct host filesystem (SQLite, policy.yml, .env)
     │
-    ▼
-┌────────────────────────────────────────────────────────┐
-│  Agent Container (per-project, persistent)              │
-│                                                        │
-│  Available tools (user runs directly):                 │
-│  ├── claude                Claude Code sessions        │
-│  ├── opencode              OpenCode (PAL MCP dispatch) │
-│  ├── nvim                  Neovim (private config)     │
-│  ├── gemini                Gemini CLI (1M context)     │
-│  ├── codex                 Codex CLI                   │
-│  └── zsh                   Shell with dev tooling      │
-│                                                        │
-│  Network stack:                                        │
-│  iptables → mitmproxy enforcer → approved domains only │
-│           ↓                                            │
-│  logging proxy → SQLite → devbox logs                   │
-│                                                        │
-│  Mounts:                                               │
-│  /workspace     ← project dir only (rw)                │
-│  /devbox        ← global config (ro)                   │
-└────────────────────────────────────────────────────────┘
-         │ HTTP_PROXY / HTTPS_PROXY
-         ▼
-┌─────────────────────────┐
-│  Proxy Sidecar          │
-│  mitmproxy enforcer.py  │  ← enforces domain allowlist
-│  + logging middleware   │  ← logs all API calls to SQLite
-└─────────────────────────┘
+    └── ~/.devbox/<hash>/        ← per-project data (logs, history, secrets)
+        ~/.config/devbox/        ← global config (opencode, .private/)
 ```
 
-The proxy sidecar is a **separate trusted container**. The agent container has no internet access except through it. Even if an agent is compromised or prompt-injected, it cannot exfiltrate data to an unapproved destination because iptables blocks all direct outbound — the proxy is the only egress path.
+### Two-Container Stack
+
+Every project runs exactly two containers orchestrated by Docker Compose:
+
+1. **Agent container** (`devbox-agent`) — Ubuntu 24.04 base with all dev tools. Lives exclusively on the `sandbox` network (`internal: true`), meaning it has **no route to the internet**. All outbound is further locked down by iptables. Users exec into this container via `devbox resume`.
+
+2. **Proxy sidecar** (`devbox-proxy`) — Python 3.12-slim with mitmproxy. Bridges the `sandbox` and `external` networks — the sole egress path for the agent. Runs two chained addons: domain enforcement and request logging.
+
+### Dual-Network Isolation
+
+Docker Compose defines two networks:
+
+- **`sandbox`** — `internal: true` bridge. Only the agent and proxy join. The `internal` flag means Docker does not create a gateway, so containers on this network literally cannot reach the internet even without iptables.
+- **`external`** — standard bridge. Only the proxy joins. This gives the proxy (and only the proxy) internet access.
+
+The agent container connects to `sandbox` only. The proxy connects to both. This is the foundation of the isolation model — even if iptables is somehow bypassed, Docker's network topology prevents direct egress.
+
+### Container Runtime Model
+
+The agent container is **not** ephemeral. It starts once per `devbox start`, holds itself open with `tail -f /dev/null`, and accepts multiple concurrent exec sessions. Users open shells with `devbox resume <name>` (which runs `docker compose exec agent gosu devbox zsh`). This "exec-in" model means:
+
+- Multiple tmux panes can each `devbox resume <name>` into the same environment
+- All tools share the same firewall, proxy, secrets, and filesystem
+- The container persists until `devbox stop` — workspace state, installed packages, and shell history survive across shell sessions
+- No port mapping, no SSH, no serve/attach complexity
+
+---
+
+## Docker Runtime Environment
+
+### macOS: OrbStack Recommended
+
+On macOS, **OrbStack** is the recommended Docker runtime over Docker Desktop. The key reason: OrbStack's Linux VM uses a shared filesystem that correctly handles Unix domain sockets, which Docker Desktop's VirtioFS/gRPC-FUSE layer does not.
+
+This matters for devbox because tools like **cmux** (the Claude Code multiplexer) communicate via Unix sockets. When running under Docker Desktop, these sockets silently fail or hang because VirtioFS doesn't fully support `AF_UNIX` over the VM boundary. OrbStack uses a purpose-built filesystem layer that handles sockets natively, so cmux sessions work correctly inside devbox containers.
+
+Additional OrbStack advantages:
+- **Lower resource usage** — smaller memory footprint than Docker Desktop's VM
+- **Faster startup** — containers launch in ~1s vs. 3-5s
+- **Native `docker` CLI** — drop-in compatible, no wrapper shims
+- **Rosetta x86 emulation** — transparent emulation for x86 images on Apple Silicon
+
+If you encounter hanging or broken tool sessions inside devbox on macOS, switching from Docker Desktop to OrbStack is the first troubleshooting step.
+
+### Linux
+
+Standard Docker Engine (24.0+) with Compose v2 works without modifications. No VM layer means Unix sockets, iptables, and all kernel interfaces work natively.
 
 ---
 
 ## Security Architecture
 
-### Layer 1 — Filesystem (Docker mounts)
+### Layer 1 — Filesystem Isolation (Docker Mounts)
 
-Only `/workspace` (the project directory) is mounted read-write. Global config is read-only. No access to `~/.ssh`, `~/.aws`, or other projects.
+Only the project directory is mounted read-write. Everything else is read-only or ephemeral:
+
+| Mount | Access | Purpose |
+|-------|--------|---------|
+| `/workspace` | `rw` | Project source code (bind-mount from host) |
+| `/devbox` | `ro` | Global config — OpenCode config, private overlay |
+| `/run/proxy-ca` | `ro` | Shared proxy CA certificate (Docker volume) |
+| `/data/history` | `rw` | Persistent shell history |
+| `/tmp` | `rw` (tmpfs) | Ephemeral temp, 256 MB limit |
+
+No access to `~/.ssh`, `~/.aws`, `~/.config`, or any other host directory. The container cannot read or modify host state beyond the project.
+
+### Layer 2 — Network Enforcement (Dual-Layer)
+
+Two independent mechanisms block unauthorized egress:
+
+#### 2a. iptables (kernel-level)
+
+The agent container's entrypoint initializes iptables before any user code runs. All three chains are locked down:
 
 ```
--v "${PROJECT}":/workspace:rw
--v ~/.config/devbox:/devbox:ro
+INPUT chain:   DROP (default deny inbound)
+  1. lo              — loopback
+  2. ESTABLISHED     — responses to outbound connections
+
+FORWARD chain: DROP (prevents use as network gateway)
+
+OUTPUT chain:  DROP (default deny outbound)
+  1. lo              — loopback (localhost)
+  2. ESTABLISHED     — responses to accepted connections
+  3. bridge:8080     — proxy sidecar (the only egress path)
+  4. 127.0.0.11:53   — Docker's embedded DNS resolver (UDP + TCP)
+  5. ICMP → DROP     — blocks covert channels and network reconnaissance
+
+IPv6: all chains DROP (fail-closed — if ip6tables setup fails, firewall_init fails)
 ```
 
-### Layer 2 — Network (dual enforcement)
+Rule order matters — loopback first (tools need localhost), then conntrack for performance, then the proxy exception, then DNS. ICMP is explicitly dropped last (it would be caught by the default DROP policy, but explicit rules are self-documenting and survive policy changes). The bridge subnet is auto-detected from `ip route` at container startup and validated against a strict CIDR pattern with octet range checking.
 
-The agent container has no direct internet access. All outbound is blocked by iptables except to the Docker bridge where the proxy sidecar runs.
+INPUT DROP prevents external connections from reaching services inside the container if network configuration is ever misconfigured. FORWARD DROP prevents the container from being used as a network gateway. These are defense-in-depth — the `internal: true` network should prevent both scenarios, but firewall rules survive Docker bugs.
 
-```bash
-# lib/firewall.sh (sourced by entrypoint.sh at container startup)
-iptables -P OUTPUT DROP
-iptables -A OUTPUT -o lo -j ACCEPT
-iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-iptables -A OUTPUT -d $DEVBOX_BRIDGE_SUBNET -p tcp --dport 8080 -j ACCEPT  # proxy
-iptables -A OUTPUT -d 127.0.0.11 -p udp --dport 53 -j ACCEPT              # DNS
-iptables -A OUTPUT -d 127.0.0.11 -p tcp --dport 53 -j ACCEPT              # DNS
+iptables runs as root during Phase 1 of the entrypoint, before dropping to the unprivileged `devbox` user. The `NET_ADMIN` capability is required for this — it's the only elevated capability the container has (all others are dropped via `cap_drop: ALL`).
+
+**IPv6 fail-closed:** If `ip6tables -P OUTPUT DROP` fails, `firewall_init` returns non-zero and the container refuses to start. Earlier versions silently continued with partial enforcement — this was changed to prevent IPv6 bypass.
+
+**Health check:** The agent's Docker health check verifies the iptables DNS rule exists (`iptables -C OUTPUT -d 127.0.0.11 -p udp --dport 53 -j ACCEPT`). If iptables isn't active, the container reports unhealthy.
+
+#### 2b. mitmproxy (application-level)
+
+The proxy sidecar runs `enforcer.py`, which intercepts every HTTP request and HTTPS CONNECT tunnel:
+
+1. Reads the domain allowlist from `/proxy/policy.yml` (YAML format)
+2. For each request, checks if `flow.request.pretty_host` matches any allowed entry
+3. Exact matches and `*.` prefix wildcards supported (e.g., `*.github.com` matches `api.github.com`)
+4. Non-matching requests get a `403 Forbidden` with body: `BLOCKED by devbox enforcer: <host> is not in the allowlist`
+
+The proxy CA certificate is generated on first run, shared via a Docker volume (`proxy-ca`), and installed into the agent's system trust store by the entrypoint. This gives mitmproxy full HTTPS visibility — it can inspect, log, and enforce even for TLS traffic.
+
+**Policy hot-reload:** The enforcer checks the policy file's mtime every `DEVBOX_RELOAD_INTERVAL` seconds (default: 30). When `devbox allowlist add` modifies the file on the host, the proxy picks up the change without restart.
+
+#### Dual-layer guarantee
+
+| Process behavior | Stopped by |
+|-----------------|------------|
+| Respects `HTTP_PROXY` env | Proxy enforcer |
+| Ignores proxy, connects directly | iptables OUTPUT DROP |
+| Attempts DNS to external resolver | iptables OUTPUT DROP (only 127.0.0.11 allowed) |
+| Attempts ICMP covert channel | iptables ICMP DROP |
+| Attempts IPv6 bypass | ip6tables OUTPUT DROP (fail-closed) |
+| Listens for inbound connections | iptables INPUT DROP |
+| Attempts network forwarding | iptables FORWARD DROP |
+| Container escape (kernel exploit) | Out of scope — keep Docker current |
+
+### Layer 3 — Credential Isolation
+
+API keys are never baked into Docker images. They're injected at runtime via Docker Compose `env_file`:
+
+```yaml
+env_file:
+  - ${DEVBOX_SECRETS_FILE}           # global secrets (~/.devbox/secrets/.env)
+  - ${DEVBOX_PROJECT_SECRETS_FILE}   # per-project override
 ```
 
-The mitmproxy sidecar runs `enforcer.py`, checking every HTTP request and HTTPS CONNECT tunnel against the domain allowlist. Non-matching requests receive a 403. The proxy CA cert is installed into the agent container's trust store at startup for full HTTPS inspection.
+Secrets files are created with `umask 077` (mode 600). The CLI validates permissions and warns if they've been loosened. File locking (`flock`) prevents concurrent modification races.
 
-Dual-layer guarantees:
-- Processes respecting `HTTP_PROXY` → stopped at proxy
-- Processes ignoring proxy env → stopped at iptables
-- No bypass path short of container escape
+The logging proxy captures all outbound API request/response bodies. If a prompt injection tricks an agent into exfiltrating credentials in a request body, the log records it — visible via `devbox logs`.
 
-### Layer 3 — Credentials (environment injection)
+### Container Hardening
 
-API keys injected at runtime via Docker Compose `env_file`. Never baked into images.
+```yaml
+cap_drop: [ALL]                     # Drop all Linux capabilities
+cap_add: [NET_ADMIN, SETUID, SETGID]  # Firewall init, gosu user switch
+security_opt: [no-new-privileges:true]  # Prevent privilege escalation
+tmpfs: /tmp (256MB)                  # Ephemeral temp, size-limited
+pids: 512                           # Prevent fork bombs
+memory: 8G (configurable)           # OOM protection
+cpus: 4.0 (configurable)            # CPU quota
+restart: unless-stopped              # Auto-recover from crashes
+```
 
-The logging proxy captures all outbound API calls. If a prompt injection tricks an agent into exfiltrating credentials in a request body, the log records it.
+`SETUID` and `SETGID` are required for `gosu` (the entrypoint drops from root to the `devbox` user after firewall setup). `no-new-privileges` prevents any process from gaining capabilities beyond what it was started with.
 
 ### Honest Threat Model
 
-- **Git credential scope:** A token granting access to all repos, not just the mounted project. Scope tokens to single repos where possible.
-- **Prompt injection via project files:** Malicious comments in dependencies can instruct the agent within approved boundaries. Network layer limits exfiltration destinations but cannot prevent in-boundary actions.
-- **Container escape:** Kernel exploits could escape containment. Mitigated by keeping Docker current and never running `--privileged`.
-- **Approved domain misuse:** The agent can send arbitrary content to approved domains. Content filtering at the proxy layer is not implemented.
+| Threat | Mitigation | Residual risk |
+|--------|-----------|---------------|
+| Agent exfiltrates data | Dual-layer network + domain allowlist | Can still send to allowed domains |
+| Prompt injection via project files | Network layer limits destinations | In-boundary actions cannot be prevented |
+| Credential theft | Runtime injection, never in images, all calls logged | Agent has env vars at runtime |
+| Git token over-scope | N/A — user responsibility | Token may grant access beyond mounted project |
+| Container escape | `cap_drop: ALL`, `no-new-privileges`, current Docker | Kernel exploits remain possible |
+| DNS tunneling | DNS restricted to Docker resolver (127.0.0.11) | Docker resolver is trusted |
+| IPv6 bypass | `ip6tables -P OUTPUT DROP` | Silent failure if ip6tables unavailable (logged) |
+
+---
+
+## Proxy Sidecar — Technical Details
+
+### Addon Chain
+
+mitmproxy loads two addons in order:
+
+1. **`enforcer.py`** — Domain allowlist enforcement
+2. **`logger.py`** — SQLite request/response logging
+
+Both are loaded via `mitmdump -s enforcer.py -s logger.py`. The enforcer runs first — blocked requests still reach the logger (with status 403), providing full audit trails.
+
+### enforcer.py
+
+**Policy loading:** Reads `/proxy/policy.yml` using PyYAML's `safe_load`. Validates file size (max 1 MB), structure (`allowed` key must be a list), and wildcard patterns (only `*.` prefix allowed, no multi-wildcard). Returns empty list on any error — **fail-closed** design.
+
+**Domain matching:** Case-insensitive. Two modes:
+- Exact: `host == pattern`
+- Wildcard: `*.example.com` matches `example.com` and `sub.example.com`
+
+**Blocking:** Both `request()` (HTTP) and `http_connect()` (HTTPS CONNECT) hooks check the allowlist. Blocked responses include the host (truncated to 253 chars to prevent oversized responses from malicious Host headers).
+
+**Hot-reload:** The `_maybe_reload()` method, called on every request, checks if `RELOAD_INTERVAL` seconds have passed since the last mtime check. If the file's mtime changed, it reloads. This means `devbox allowlist add` takes effect within one interval without restarting the proxy.
+
+### logger.py
+
+**Database:** SQLite at `/data/api.db` with WAL mode for concurrent read/write. Schema:
+
+```sql
+CREATE TABLE requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now')),
+    method TEXT NOT NULL,
+    url TEXT NOT NULL,
+    host TEXT NOT NULL,
+    status INTEGER,
+    request_content_type TEXT,
+    request_body TEXT,
+    response_content_type TEXT,
+    response_body TEXT,
+    duration_ms INTEGER
+);
+```
+
+**Body truncation:** Request and response bodies are truncated at 64 KB to prevent unbounded storage growth. Truncated entries are marked with `[TRUNCATED by devbox logger at 64KB]`.
+
+**Retention:** Configurable via environment variables:
+- `DEVBOX_LOG_MAX_AGE_DAYS` — delete rows older than N days (default: 90)
+- `DEVBOX_LOG_MAX_ROWS` — keep at most N rows (default: 100,000)
+- Pruning runs at startup and every 1,000 inserts
+
+**Querying:** The host-side `devbox logs` command reads the SQLite database directly (or falls back to running `sqlite3` inside the container if the host lacks it). Supports filters: `--errors`, `--blocked`, `--slow`, `--hosts`, `--since`, `--until`.
+
+### CA Certificate Flow
+
+```
+1. Proxy starts → generates CA keypair in /home/devbox/.mitmproxy/
+   (flock serializes concurrent proxy starts on the same volume)
+2. Exports mitmproxy-ca-cert.pem to /ca/ (shared Docker volume)
+3. Agent entrypoint waits for /run/proxy-ca/mitmproxy-ca-cert.pem (up to 60s)
+4. Copies to /usr/local/share/ca-certificates/mitmproxy-ca.crt
+5. Runs update-ca-certificates --fresh
+6. Sets NODE_EXTRA_CA_CERTS, REQUESTS_CA_BUNDLE, SSL_CERT_FILE
+```
+
+This ensures all TLS libraries (OpenSSL, Node.js, Python requests) trust the proxy's CA, allowing full HTTPS inspection.
+
+---
+
+## Agent Container — Technical Details
+
+### Two-Phase Entrypoint
+
+The agent container uses a split entrypoint to minimize privilege exposure:
+
+**Phase 1 — Root (`entrypoint.sh`):**
+- Detects the Docker bridge subnet from `ip route`
+- Validates the CIDR (format regex + semantic octet/prefix range check)
+- Sources and runs `firewall_init()` — mandatory, container refuses to start on failure
+- Waits for proxy CA certificate, installs into system trust store
+- Sets TLS environment variables
+
+**Phase 2 — Unprivileged (`user-setup.sh` via `gosu devbox`):**
+- Configures git identity from `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` env vars
+- Links OpenCode configuration from read-only mount
+- Copies private config overlay from `/devbox/.private/` into user home
+- Sets up tmux symlinks for version compatibility
+- Changes to `/workspace` and holds open with `tail -f /dev/null`
+
+The `gosu` call (`exec gosu devbox ...`) replaces the root process entirely — no root shell remains running.
+
+### Dockerfile — Multi-Stage Build
+
+The agent image uses a two-stage Docker build:
+
+**Stage 1 (builder):** Installs everything that requires build tools or network access:
+- Node.js 22 LTS (via NodeSource apt repo)
+- npm global packages: opencode-ai, @google/gemini-cli, @openai/codex, @anthropic-ai/claude-code, gsd-opencode
+- GitHub CLI (via apt repo)
+- uv (Python toolchain manager, copied from official image)
+- Oh My Zsh + Powerlevel10k + plugins (git clones — least cacheable, ordered last)
+
+**Stage 2 (runtime):** Copies only artifacts from the builder, installs minimal runtime packages:
+- `COPY --from=builder` for npm packages, gh, uv, Oh My Zsh
+- Runtime packages: bash, delta, fzf, git, gosu, iproute2, iptables, jq, neovim, python3, sqlite3, tmux, zsh
+- Shell configs from `templates/`
+- Firewall script and language profiles from `lib/` and `tooling/profiles/`
+- Entrypoint scripts
+
+Layer ordering is optimized for Docker build cache — apt packages and npm installs (stable) come before git clones (change frequently).
+
+### Language Profiles
+
+Profiles are self-contained bash scripts in `tooling/profiles/` that install language toolchains inside the running container:
+
+| Profile | What it installs | Variants |
+|---------|-----------------|----------|
+| `rust` | rustup, cargo, clippy, rustfmt, cargo-watch, cargo-edit | `wasm` (wasm-pack, wasm32 target) |
+| `python` | uv, python3, ruff, mypy, pytest | `ml` (numpy, pandas, scikit-learn), `api` (fastapi, httpx) |
+| `node` | Node.js LTS, pnpm, typescript, eslint, prettier | `bun` (Bun runtime) |
+| `go` | Go toolchain, golangci-lint, delve, gopls | — |
+
+Profiles run via `docker compose exec agent gosu devbox bash -c 'source "/usr/local/lib/devbox/profiles/$1.sh"' _ "<name>"`. The profile name is validated against `^[a-zA-Z0-9_-]+$` before execution. Variants are validated against the profile's declared `# VARIANTS:` header.
 
 ---
 
 ## Network Policy
 
-Each project gets its own `policy.yml`, read-only mounted into the proxy. The agent cannot modify it.
+Each project gets its own `policy.yml`, stored at `~/.devbox/<hash>/policy.yml` on the host and mounted read-only into the proxy at `/proxy/policy.yml`. The agent container cannot access or modify this file.
 
-```yaml
-version: "1"
+The default policy (`templates/policy.yml`) allows:
 
-allowed:
-  # Model APIs
-  - api.anthropic.com
-  - openrouter.ai
-  - generativelanguage.googleapis.com
-  - api.openai.com
+- **Model APIs:** api.anthropic.com, openrouter.ai, generativelanguage.googleapis.com, api.openai.com
+- **Package registries:** crates.io, registry.npmjs.org, pypi.org, files.pythonhosted.org, storage.googleapis.com
+- **Code hosting:** github.com, api.github.com, *.githubusercontent.com
+- **Language toolchains:** sh.rustup.rs, go.dev, dl.google.com, *.golang.org, astral.sh
+- **Documentation:** docs.rs, docs.python.org, developer.mozilla.org
+- **System updates:** security.ubuntu.com, archive.ubuntu.com
 
-  # Package registries
-  - crates.io
-  - static.crates.io
-  - index.crates.io
-  - registry.npmjs.org
-  - pypi.org
-  - files.pythonhosted.org
+Users manage the allowlist via `devbox allowlist add|remove|reset`. All modifications use file locking (`flock`) to prevent concurrent write races.
 
-  # Code hosting
-  - github.com
-  - api.github.com
-  - "*.githubusercontent.com"
+---
 
-  # System updates
-  - security.ubuntu.com
-  - archive.ubuntu.com
+## CLI Architecture
+
+The `devbox` script is a bash CLI that sources library modules from `lib/`:
+
+```
+devbox (entry point)
+  ├── lib/commands.sh    — command handlers (start, stop, profile, logs, etc.)
+  ├── lib/container.sh   — Docker Compose lifecycle (build, start, shell, status)
+  ├── lib/secrets.sh     — secrets management (set, show, edit, remove)
+  ├── lib/allowlist.sh   — allowlist CRUD (add, remove, reset, show)
+  ├── lib/profile.sh     — profile discovery, validation, menus
+  ├── lib/firewall.sh    — iptables rules (sourced inside container, not on host)
+  └── lib/ui.sh          — TUI helpers (info, warn, error, confirm, spinner)
 ```
 
-The full default policy (including language toolchain and package manager domains) is in `templates/policy.yml`.
+### Project Identity
+
+Each project is identified by a 16-character SHA-256 hash of its absolute path:
+
+```bash
+echo -n "/home/user/projects/my-app" | sha256sum | cut -c1-16
+# → a1b2c3d4e5f67890
+```
+
+This hash is used as the data directory name (`~/.devbox/bf341fbe16930634/`). The Docker Compose project name includes both the human-friendly name and the hash for uniqueness: `devbox-ralph-bf341fbe16930634`. The project name defaults to the directory basename but can be overridden via `DEVBOX_NAME` in `.devboxrc`. The full path is stored in `.project_path` and the name in `.project_name`.
+
+### Per-Project Configuration (.devboxrc)
+
+Projects can include a `.devboxrc` file with whitelisted variables:
+
+| Variable | Type | Default | Purpose |
+|----------|------|---------|---------|
+| `DEVBOX_MEMORY` | Docker memory (e.g., `12G`) | `8G` | Agent container memory limit |
+| `DEVBOX_CPUS` | Decimal (e.g., `4.0`) | `4.0` | Agent container CPU limit |
+| `DEVBOX_BRIDGE_SUBNET` | CIDR (e.g., `172.18.0.0/16`) | Auto-detected | Docker bridge subnet for firewall |
+| `DEVBOX_RELOAD_INTERVAL` | Integer (seconds) | `30` | Policy file hot-reload interval |
+| `DEVBOX_PRIVATE_CONFIGS` | Git URL or path | — | Private config overlay source |
+| `DEVBOX_NAME` | Alphanumeric + hyphens (max 32) | Directory basename | Human-friendly project name |
+
+Only these variable names are accepted — arbitrary keys are rejected. Values are validated by type. Environment variables take precedence over file values.
 
 ---
 
-## Proxy Sidecar
+## Private Config Overlay
 
-Two mitmproxy addons chained:
+Users overlay their local dev environment into the container without committing configs to the public repo. The goal: the container should feel identical to your local machine.
 
-- **enforcer.py** — checks every request against `policy.yml`. Returns 403 for non-allowed domains. Blocks HTTPS CONNECT tunnels to non-allowed hosts.
-- **logger.py** — logs every request/response to SQLite (timestamp, method, url, status, request/response bodies). Queryable via `devbox logs` or direct `sqlite3`.
+Set `DEVBOX_PRIVATE_CONFIGS` to a local directory path or private git URL:
 
----
+```
+your-configs/
+├── Dockerfile       # Optional: FROM devbox-agent:latest, pre-build plugins
+├── claude/          # → ~/.claude/ (settings.json, hooks, skills)
+├── opencode/        # → ~/.config/opencode/ (merged with defaults)
+├── nvim/            # → ~/.config/nvim/ (init.lua, lua/, lazy-lock.json)
+├── tmux/            # → ~/.config/tmux/ + ~/.tmux.conf (symlinked)
+└── .zshrc           # → ~/.zshrc (replaces default devbox zshrc)
+```
 
-## Container Stack
+### Three-Phase Flow
 
-Docker Compose manages two services per project:
+1. **Host sync** — `sync_private_configs()` symlinks a local directory or shallow-clones a git repo to `~/.config/devbox/.private/`. Local paths are symlinked (zero-copy); git repos use `--depth=1 --single-branch`.
 
-- **agent** — Ubuntu 24.04 with Claude Code, OpenCode, Gemini CLI, Codex, GitHub CLI, neovim, zsh/tmux/powerline. Firewall initialized at startup. Holds container open for exec sessions. All traffic routed through proxy.
-- **proxy** — Python 3.12 slim with mitmproxy and the two addons (enforcer + logger). Sole egress path for the agent container.
+2. **Image build** (optional, cached) — if `.private/Dockerfile` exists, `container_build()` runs `docker build -f .private/Dockerfile -t devbox-agent:latest`. This layers heavy installs (nvim plugins, LSP servers) on top of the base image. Docker build cache means plugins only reinstall when lock files change (e.g., `lazy-lock.json`).
 
-Volumes:
-- `proxy-ca` shared volume for the proxy CA certificate
-- Project-specific data under `~/.devbox/<project-hash>/`
+3. **Startup overlay** — Phase 2 of the entrypoint (`user-setup.sh`) copies configs from the read-only mount (`/devbox/.private/`) into the user's home. This runs every start, so config file changes take effect immediately without rebuilding.
+
+### Design Rationale
+
+- **Read-only mount + copy** — the host directory is mounted `:ro` so the container cannot modify host state. Configs are copied into user home for tools that need write access (e.g., nvim's lazy-lock).
+- **Build cache for plugins** — nvim Lazy sync, LSP installs, and similar heavy operations are baked into the image layer. Only re-runs when the relevant COPY layer changes.
+- **Overlay on every start** — even with pre-built images, the entrypoint re-copies configs. Editing a config file takes effect on next `devbox start` without rebuilding.
+- **Private repo isolation** — cloned to `~/.config/devbox/.private/`, never referenced in the public devbox repo or committed to images by default.
 
 ---
 
@@ -186,60 +484,52 @@ This is optional — users who prefer Claude Code or direct tool use are not req
 
 ---
 
-## CLI Interface
+## Data Layout
 
-```bash
-devbox                        # Start environment and open shell
-devbox ~/projects/my-app      # Start for specific project
-devbox shell                  # Open another shell into running env
-devbox profile rust           # Install language profile
-devbox allowlist              # View/edit network allowlist
-devbox logs                   # Show recent API calls (sqlite3)
-devbox info                   # Status / info panel
-devbox stop                   # Stop the running container stack
-devbox clean --project        # Clean this project's data
-devbox clean --all            # Clean everything
-devbox rebuild                # Rebuild base image
-devbox update                 # Pull latest source and rebuild
-devbox secrets                # Manage API keys and credentials
-devbox resize 12G             # Resize container memory (restarts)
-devbox status                 # Show running sessions
-devbox completions            # Output shell completions
-devbox help                   # Show help and usage info
-```
-
----
-
-## Private Config Overlay
-
-Users overlay their local dev environment into the container without committing configs to the public repo. The goal: the container should feel identical to your local machine.
-
-Set `DEVBOX_PRIVATE_CONFIGS` to a local directory path or private git URL:
+### Host Filesystem
 
 ```
-your-configs/
-├── Dockerfile       # Optional: FROM devbox-agent:latest, pre-build plugins
-├── claude/          # → ~/.claude/ (settings.json, hooks, skills)
-├── opencode/        # → ~/.config/opencode/ (merged with defaults)
-├── nvim/            # → ~/.config/nvim/ (init.lua, lua/, lazy-lock.json)
-├── tmux/            # → ~/.config/tmux/ + ~/.tmux.conf (symlinked)
-└── .zshrc           # → ~/.zshrc (replaces default devbox zshrc)
+~/.devbox/                           # Per-user runtime data (DEVBOX_DATA)
+├── secrets/.env                     # Global API keys (mode 600)
+├── <project-hash>/
+│   ├── .project_path                # Absolute path for display
+│   ├── policy.yml                   # Project network policy
+│   ├── secrets/.env                 # Per-project secrets override (mode 600)
+│   ├── history/                     # Persistent shell history
+│   ├── memory/                      # OpenCode project memory
+│   └── logs/
+│       └── api.db                   # SQLite API log
+
+~/.config/devbox/                    # Global config (DEVBOX_CONFIG, mounted ro)
+├── opencode/                        # OpenCode config (opencode.json, pal/, etc.)
+└── .private/                        # Private config overlay (git or symlink)
+    ├── Dockerfile                   # Optional image layer
+    ├── claude/                      # → ~/.claude/
+    ├── opencode/                    # → ~/.config/opencode/
+    ├── nvim/                        # → ~/.config/nvim/
+    ├── tmux/                        # → ~/.config/tmux/
+    └── .zshrc                       # → ~/.zshrc
 ```
 
-### Three-phase flow
+### Container Volume Mounts
 
-1. **Host sync** — `sync_private_configs()` symlinks a local directory or clones a git repo to `~/.config/devbox/.private/` on the host. Local paths are symlinked (zero-copy); git repos use shallow clone.
+| Host path | Container path | Mode | Purpose |
+|-----------|---------------|------|---------|
+| `~/projects/my-app/` | `/workspace` | rw | Project source |
+| `~/.config/devbox/` | `/devbox` | ro | Config + private overlay |
+| `~/.devbox/<hash>/history/` | `/data/history` | rw | Shell history |
+| `~/.devbox/<hash>/memory/` | `~/.opencode-mem/project` | rw | OpenCode memory |
+| `~/.devbox/<hash>/logs/` | `/data` (proxy) | rw | API logs |
+| `~/.devbox/<hash>/policy.yml` | `/proxy/policy.yml` (proxy) | ro | Allowlist |
+| `~/.devbox/<hash>/secrets/.env` | env-file | — | Per-project secrets |
+| `~/.devbox/secrets/.env` | env-file | — | Global secrets |
 
-2. **Image build** (optional, cached) — if `.private/Dockerfile` exists, `container_build()` runs `docker build -f .private/Dockerfile -t devbox-agent:latest .private/`. This layers heavy installs (nvim plugins, LSPs) on top of the base image. Docker build cache means plugins only reinstall when lock files change.
+Docker-managed volumes:
 
-3. **Startup overlay** — `entrypoint.sh` copies configs from the read-only mount (`/devbox/.private/`) into the user's home. This runs every start, so config file changes take effect immediately without rebuilding. Tmux configs are symlinked for version compatibility. The `.zshrc` replaces the default.
-
-### Design rationale
-
-- **Read-only mount + copy** — the host directory is mounted `:ro` so the container cannot modify host state. Configs are copied to user home for tools that need write access.
-- **Build cache for plugins** — nvim Lazy sync, LSP installs, and similar heavy operations are baked into the image layer. Only re-runs when the relevant COPY layer changes (e.g., lazy-lock.json).
-- **Overlay on every start** — even with pre-built images, the entrypoint re-copies configs. This means editing a config file takes effect on next `devbox start` without rebuilding.
-- **Private repo isolation** — the repo is cloned to `~/.config/devbox/.private/`, never referenced in the public devbox repo or committed to images by default.
+| Volume | Container path | Purpose |
+|--------|---------------|---------|
+| `proxy-ca` | `/run/proxy-ca` (agent, ro) and `/ca` (proxy, rw) | Shared mitmproxy CA certificate |
+| `devbox-shared-memory` | `~/.opencode-mem/shared` | Cross-project OpenCode memory |
 
 ---
 
@@ -249,34 +539,34 @@ your-configs/
 devbox/
 ├── devbox                      # Main CLI entry point (bash)
 ├── main.sh                     # Bootstrap / symlink installer
-├── Dockerfile                  # Agent container image
-├── entrypoint.sh               # Agent container entrypoint
-├── docker-compose.yml          # Container + sidecar stack
+├── Dockerfile                  # Agent container image (multi-stage)
+├── entrypoint.sh               # Agent entrypoint (Phase 1: root, firewall + CA)
+├── user-setup.sh               # Agent entrypoint (Phase 2: devbox user, config overlay)
+├── docker-compose.yml          # Container + sidecar stack definition
 ├── proxy/
-│   ├── Dockerfile              # mitmproxy sidecar image
-│   ├── entrypoint.sh           # Proxy entrypoint (CA + mitmproxy)
+│   ├── Dockerfile              # Proxy sidecar image (Python 3.12-slim)
+│   ├── entrypoint.sh           # Proxy entrypoint (CA gen + mitmdump)
 │   ├── enforcer.py             # Domain allowlist addon
-│   ├── logger.py               # SQLite logging addon
-│   └── policy.yml.example      # Default policy template (reference)
+│   └── logger.py               # SQLite logging addon
 ├── lib/
 │   ├── commands.sh             # CLI command handlers and helpers
-│   ├── container.sh            # Container lifecycle functions
+│   ├── container.sh            # Container lifecycle (build, start, shell, status)
 │   ├── firewall.sh             # iptables + ip6tables setup
 │   ├── secrets.sh              # Secrets management (set/show/edit/remove)
-│   ├── profile.sh              # Profile management
-│   ├── allowlist.sh            # Allowlist CLI
-│   └── ui.sh                   # TUI helpers, menus
+│   ├── profile.sh              # Profile management and menus
+│   ├── allowlist.sh            # Allowlist CRUD operations
+│   └── ui.sh                   # TUI helpers (info, warn, error, confirm, spinner)
 ├── tooling/
 │   ├── completions.bash        # Bash tab completion
 │   ├── completions.zsh         # Zsh tab completion
-│   └── profiles/               # Language/tool profile definitions
-│       ├── _common.sh
-│       ├── rust.sh
-│       ├── python.sh
-│       ├── node.sh
-│       └── go.sh
+│   └── profiles/
+│       ├── _common.sh          # Shared profile helpers
+│       ├── rust.sh             # Rust toolchain profile
+│       ├── python.sh           # Python toolchain profile
+│       ├── node.sh             # Node.js toolchain profile
+│       └── go.sh               # Go toolchain profile
 ├── config/
-│   └── opencode/               # Default OpenCode config (available in container)
+│   └── opencode/               # Default OpenCode config
 │       ├── opencode.json
 │       ├── agents/
 │       ├── pal/systemprompts/clink/
@@ -287,40 +577,17 @@ devbox/
 │   ├── zshrc                   # Container zsh config
 │   ├── tmux.conf               # Container tmux config
 │   └── private-overlay.Dockerfile  # Template for private config Dockerfile
+├── tests/
+│   ├── bats/                   # Bash integration tests (BATS)
+│   └── pytest/                 # Python unit tests (enforcer, logger)
 ├── docs/
 │   ├── DESIGN.md               # This file
-│   ├── PLAN.md                 # Implementation plan
-├── .github/workflows/ci.yml    # CI: lint, build, smoke test
-├── CREDITS.md
-├── LICENSE
-└── README.md
-```
-
-Host directories:
-
-```
-~/.devbox/                      # Per-user runtime data
-├── secrets/.env                # API keys (created with umask 077)
-├── <project-hash>/
-│   ├── history/                # Shell history
-│   ├── memory/                 # Agent memory persistence
-│   ├── policy.yml              # Project network policy
-│   └── logs/
-│       └── api.db              # SQLite API log
-
-~/.config/devbox/               # Global config (host-mounted ro)
-├── opencode/                   # OpenCode config directory
-│   ├── opencode.json
-│   ├── agents/
-│   ├── pal/systemprompts/clink/
-│   └── skills/
-└── .private/                   # Private config overlay (from git)
-    ├── Dockerfile              # Optional private image layer
-    ├── claude/                 # → ~/.claude/
-    ├── opencode/               # → ~/.config/opencode/
-    ├── nvim/                   # → ~/.config/nvim/
-    ├── tmux/                   # → ~/.config/tmux/ + ~/.tmux.conf
-    └── .zshrc                  # → ~/.zshrc
+│   └── PLAN.md                 # Implementation plan and changelog
+├── .github/workflows/ci.yml    # CI: lint + build + smoke test
+├── .pre-commit-config.yaml     # Linter config (shellcheck, hadolint, ruff, etc.)
+├── CREDITS.md                  # Attribution
+├── LICENSE                     # MIT
+└── README.md                   # Quickstart and user documentation
 ```
 
 ---
@@ -331,13 +598,61 @@ Host directories:
 |----------|--------|-----------|
 | New project vs fork | New project | Scope of changes makes it genuinely distinct |
 | Licensing | MIT | Compatible with all source projects |
-| Container model | Isolated environment (exec-in) | Tool-agnostic; user runs whatever they want per-pane |
-| Network enforcement | Dual-layer (mitmproxy + iptables) | Single-layer iptables bypassable via hardcoded IPs |
-| Observability | SQLite + CLI queries | Zero extra infrastructure, queryable, persistent |
+| Container model | Isolated environment (exec-in) | Tool-agnostic; user runs whatever they want per-pane. No serve/attach complexity, no port mapping. |
+| macOS runtime | OrbStack recommended | Docker Desktop's VirtioFS breaks Unix domain sockets (cmux). OrbStack handles them natively. |
+| Network enforcement | Dual-layer (mitmproxy + iptables) | Single-layer iptables bypassable via hardcoded IPs. Single-layer proxy bypassable by ignoring env vars. Both together close the gap. |
+| Network topology | `internal: true` + separate external | Even without iptables, Docker's network isolation prevents direct egress |
+| Observability | SQLite + CLI queries | Zero extra infrastructure, queryable, persistent, works offline |
 | Config storage | Host-mounted read-only | Updates without rebuilds; agent cannot tamper |
-| Secrets | `--env-file` at runtime | Never baked into image |
+| Secrets | `--env-file` at runtime | Never baked into image. File locking prevents races. |
 | Container scope | One per project | True isolation, per-project network policy |
-| Private configs | Git repo + optional Dockerfile overlay | Configs stay private; heavy installs baked into image |
-| Credential injection | Environment only | No SSH key copying |
+| Private configs | Git repo + optional Dockerfile overlay | Configs stay private; heavy installs baked into cached image layer |
+| Credential injection | Environment only | No SSH key copying, no volume-mounting credential files |
 | Policy file location | Host-mounted read-only | Agent cannot modify its own network policy |
+| Entrypoint split | Two phases (root → gosu devbox) | Minimizes root exposure. Phase 1: firewall + CA. Phase 2: user config + hold open. |
+| IPv6 | DROP all if ip6tables available | Prevents bypass via IPv6 tunneling |
+| DNS | Restricted to 127.0.0.11 | Prevents DNS tunneling to external resolvers |
 | Rate limiting | Intentionally not implemented | Single-user tool; user controls agent and API keys. Rate limiting adds config complexity and risks interrupting legitimate sessions. For runaway spend, set budget alerts on your API provider's dashboard. |
+| Fail-closed enforcer | Empty allowlist on policy error | Security default: if the policy file is missing or malformed, block all traffic rather than allow all |
+| CIDR validation | Regex + semantic check | Regex validates format, separate function validates octets ≤ 255 and prefix ≤ 32 |
+| Default seccomp | Docker's built-in profile | Blocks ~44 dangerous syscalls (ptrace, bpf, etc.) out of the box. Custom profile not needed given cap_drop: ALL. |
+| Mutable rootfs | Not read-only | `read_only: true` would require restructuring the home directory (Oh My Zsh lives in /home/devbox from the image layer; user-setup.sh writes config there). Trade-off: system binaries are writable but the container is ephemeral — persistence requires volume mounts which we control. |
+
+---
+
+## Comparison with Production Tools
+
+devbox's architecture was evaluated against production AI isolation tools. Key comparisons:
+
+| Tool | Isolation level | Network egress control | Request-level logging | Local/self-hosted |
+|------|----------------|----------------------|----------------------|-------------------|
+| **E2B** | Firecracker microVM (KVM) | SNI/Host header filtering | No | Cloud-first |
+| **Daytona** | Docker (+ optional Kata) | API-driven allow/block | No | Yes |
+| **Coder** | Process-level (nsjail/Landlock) | Domain + HTTP method + path | Audit logs only | Yes |
+| **Gitpod** | K8s pods + VM | VPC network policies | No | Enterprise |
+| **Dev Containers** | Docker container | None by default | No | Yes |
+| **devbox** | Docker container | iptables + mitmproxy allowlist | Full HTTP req/resp to SQLite | Yes |
+
+### Where devbox is ahead
+
+**Request-level observability** — no other tool in this landscape logs full HTTP request/response bodies to a queryable store. Coder's Agent Boundaries come closest with audit logs, but at process level, not container level.
+
+**Dual-layer network enforcement** — most tools use either iptables OR a proxy. devbox uses both, closing the gap that either alone leaves open (processes ignoring proxy env vs. hardcoded IPs bypassing iptables).
+
+### Where production tools are ahead
+
+**Isolation depth** — E2B and Firecracker use hardware virtualization (KVM), providing a fundamentally stronger boundary than Docker namespaces/cgroups. A container escape gives host access; a VM escape is orders of magnitude harder. gVisor sits in between as a potential drop-in upgrade.
+
+**Credential brokering** — E2B's egressTransform injects Authorization headers at the proxy layer so secrets never enter the sandbox at all. Coder provisions per-workspace ephemeral credentials via Vault. devbox uses environment variable injection, which means all container processes can read API keys via `/proc/self/environ`.
+
+**Read-only root filesystem** — production containers typically use `read_only: true` to prevent malware persistence. devbox trades this for simplicity (Oh My Zsh + user-setup.sh writes to /home/devbox). A future improvement could move Oh My Zsh to /opt/ on the read-only rootfs.
+
+### Accepted trade-offs
+
+These are deliberate design choices, not oversights:
+
+1. **Docker over Firecracker** — devbox is a single-user local tool. Docker is universally available; Firecracker requires KVM and custom orchestration. The threat model is "prevent accidental data exfiltration by AI agents," not "multi-tenant hostile workloads."
+
+2. **Environment variables over credential brokering** — implementing proxy-layer header injection would mean API keys never enter the container, but it requires per-provider logic (different header formats for Anthropic, OpenAI, etc.) and breaks tools that manage their own auth. For a tool-agnostic environment, env vars are the pragmatic choice.
+
+3. **SQLite over encrypted storage** — API logs contain request/response bodies (potentially sensitive). SQLite stores them in plaintext on the host. Encryption (SQLCipher) would add a dependency and key management complexity. For a single-user tool, host filesystem permissions (umask 077) are sufficient; the threat is agent exfiltration, not host compromise.

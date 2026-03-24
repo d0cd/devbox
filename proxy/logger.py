@@ -73,15 +73,19 @@ def _truncate(body: bytes | None, max_size: int = MAX_BODY_SIZE) -> str | None:
     """Decode and optionally truncate a body for storage.
 
     Truncation is based on byte length to enforce a consistent size limit
-    regardless of character encoding.
+    regardless of character encoding. When truncating, backs up to a valid
+    UTF-8 character boundary to avoid producing replacement characters.
     """
     if body is None or len(body) == 0:
         return None
 
-    # Truncate at the byte level before decoding to enforce the size limit.
     if len(body) > max_size:
-        body = body[:max_size]
-        return body.decode("utf-8", errors="replace") + TRUNCATION_MARKER
+        # Back up from the cut point to find a valid UTF-8 boundary.
+        # UTF-8 continuation bytes start with 0b10xxxxxx (0x80-0xBF).
+        end = max_size
+        while end > max_size - 4 and end > 0 and (body[end - 1] & 0xC0) == 0x80:
+            end -= 1
+        return body[:end].decode("utf-8", errors="replace") + TRUNCATION_MARKER
 
     return body.decode("utf-8", errors="replace")
 
@@ -113,12 +117,20 @@ class Logger:
         self.db: sqlite3.Connection | None = None
         self._insert_count: int = 0
 
+    def __del__(self) -> None:
+        """Safety net: close the database if done() was not called."""
+        if self.db is not None:
+            self.db.close()
+            self.db = None
+
     def load(self, loader: object) -> None:
         """Initialize the SQLite database and schema."""
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(str(DB_PATH), timeout=5.0)
         # WAL mode reduces write contention with concurrent readers.
         self.db.execute("PRAGMA journal_mode=WAL")
+        # NORMAL sync is safe with WAL and reduces write latency.
+        self.db.execute("PRAGMA synchronous=NORMAL")
         # Limit WAL file size to prevent unbounded growth.
         self.db.execute("PRAGMA journal_size_limit=67108864")
         # Incremental auto-vacuum reclaims space from deleted rows.

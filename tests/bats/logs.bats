@@ -25,15 +25,17 @@ CREATE TABLE requests (
     host TEXT,
     url TEXT,
     status INTEGER,
-    duration_ms INTEGER,
+    request_content_type TEXT,
     request_body TEXT,
-    response_body TEXT
+    response_content_type TEXT,
+    response_body TEXT,
+    duration_ms INTEGER
 );
-INSERT INTO requests VALUES (1, '2026-03-15 10:00:00', 'POST', 'api.anthropic.com', '/v1/messages', 200, 1200, '', '');
-INSERT INTO requests VALUES (2, '2026-03-15 10:05:00', 'POST', 'api.openai.com', '/v1/chat', 500, 3000, '', '');
-INSERT INTO requests VALUES (3, '2026-03-15 11:00:00', 'GET', 'evil.com', '/', 403, 5, '', '');
-INSERT INTO requests VALUES (4, '2026-03-15 12:00:00', 'POST', 'api.anthropic.com', '/v1/messages', 200, 8000, '', '');
-INSERT INTO requests VALUES (5, '2026-03-16 09:00:00', 'POST', 'api.anthropic.com', '/v1/messages', 200, 500, '', '');
+INSERT INTO requests VALUES (1, '2026-03-15 10:00:00', 'POST', 'api.anthropic.com', '/v1/messages', 200, 'application/json', '', 'application/json', '', 1200);
+INSERT INTO requests VALUES (2, '2026-03-15 10:05:00', 'POST', 'api.openai.com', '/v1/chat', 500, 'application/json', '', 'application/json', '', 3000);
+INSERT INTO requests VALUES (3, '2026-03-15 11:00:00', 'GET', 'evil.com', '/', 403, NULL, '', 'text/plain', '', 5);
+INSERT INTO requests VALUES (4, '2026-03-15 12:00:00', 'POST', 'api.anthropic.com', '/v1/messages', 200, 'application/json', '', 'application/json', '', 8000);
+INSERT INTO requests VALUES (5, '2026-03-16 09:00:00', 'POST', 'api.anthropic.com', '/v1/messages', 200, 'application/json', '', 'application/json', '', 500);
 SQL
 }
 

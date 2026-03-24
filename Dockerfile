@@ -46,10 +46,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         | tee /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh
 
-# Oh My Zsh + Powerlevel10k + common plugins (external git repos — least cacheable, last).
+# Oh My Zsh + common plugins (external git repos — least cacheable, last).
+# p10k is deliberately excluded — the default devbox prompt is minimal.
+# Users who want p10k can install it via their private overlay Dockerfile.
 RUN git clone --depth=1 https://github.com/ohmyzsh/ohmyzsh.git /root/.oh-my-zsh \
-    && git clone --depth=1 https://github.com/romkatv/powerlevel10k.git \
-        /root/.oh-my-zsh/custom/themes/powerlevel10k \
     && git clone --depth=1 https://github.com/zsh-users/zsh-syntax-highlighting.git \
         /root/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting \
     && git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions.git \
@@ -96,13 +96,19 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     zsh
 
 # Create non-root user for running the agent after firewall setup.
-RUN groupadd -r devbox && useradd -r -g devbox -m -d /home/devbox -s /bin/zsh devbox
+# Fixed UID/GID 1000 — must match the tmpfs uid/gid in docker-compose.yml.
+# Ubuntu 24.04 ships with a 'ubuntu' user/group at 1000; remove it first.
+RUN (getent group 1000 | cut -d: -f1 | xargs -r groupdel) 2>/dev/null; \
+    (getent passwd 1000 | cut -d: -f1 | xargs -r userdel) 2>/dev/null; \
+    groupadd -g 1000 devbox && useradd -u 1000 -g devbox -m -d /home/devbox -s /bin/zsh devbox \
+    && usermod -aG tty devbox
 
 # --- Copy artifacts from builder ---
 
-# Oh My Zsh framework.
-COPY --from=builder /root/.oh-my-zsh /home/devbox/.oh-my-zsh
-RUN chown -R devbox:devbox /home/devbox/.oh-my-zsh
+# Oh My Zsh framework — installed to /opt (read-only rootfs safe).
+# The ZSH env var in .zshrc points here instead of ~/.oh-my-zsh.
+COPY --from=builder /root/.oh-my-zsh /opt/oh-my-zsh
+RUN chown -R devbox:devbox /opt/oh-my-zsh
 
 # npm global packages (includes OpenCode, Gemini CLI, Codex, Claude Code, etc.).
 COPY --from=builder /usr/lib/node_modules /usr/lib/node_modules
@@ -116,9 +122,9 @@ COPY --from=builder /usr/bin/gh /usr/bin/gh
 COPY --from=builder /usr/local/bin/uv /usr/local/bin/uv
 
 # --- Shell configuration ---
-COPY templates/zshrc /home/devbox/.zshrc
-COPY templates/tmux.conf /home/devbox/.tmux.conf
-RUN chown devbox:devbox /home/devbox/.zshrc /home/devbox/.tmux.conf
+# Default configs go to /etc/skel so user-setup.sh can populate the tmpfs home.
+COPY templates/zshrc /etc/skel/.zshrc
+COPY templates/tmux.conf /etc/skel/.tmux.conf
 
 # --- Library scripts and profiles ---
 COPY lib/firewall.sh /usr/local/lib/devbox/firewall.sh
@@ -126,7 +132,8 @@ COPY tooling/profiles/ /usr/local/lib/devbox/profiles/
 
 # --- Entrypoint ---
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY user-setup.sh /usr/local/bin/user-setup.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/user-setup.sh
 
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

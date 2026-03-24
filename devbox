@@ -2,9 +2,10 @@
 # devbox — isolated containerized development environment.
 #
 # Usage:
-#   devbox [project-path]    Start environment and open shell (default: current dir)
-#   devbox shell             Open another shell into running environment
-#   devbox stop              Stop the running container stack
+#   devbox [project-path]    Start or resume environment (default: current dir)
+#   devbox start [path]      Explicitly start a new session
+#   devbox resume [name]     Shell into a running session by name
+#   devbox stop [name]       Stop a session
 #   devbox status            Show running sessions
 #   devbox info              Show container status and project info
 #   devbox profile [name]    Install a language profile (interactive if no name)
@@ -80,11 +81,17 @@ main() {
     fi
 
     case "$cmd" in
-        shell)
-            cmd_shell
+        start)
+            shift
+            cmd_start "${1:-}"
+            ;;
+        resume)
+            shift
+            container_shell "${1:-}"
             ;;
         stop)
-            cmd_stop
+            shift
+            cmd_stop "${1:-}"
             ;;
         status)
             cmd_status
@@ -150,13 +157,14 @@ main() {
             echo "devbox v${DEVBOX_VERSION}"
             ;;
         *)
-            if [ -n "$cmd" ] && [ ! -d "$cmd" ]; then
+            if [ -z "$cmd" ] || [ -d "$cmd" ]; then
+                # No subcommand or a valid directory path — start or resume.
+                cmd_start "$cmd"
+            else
                 ui_error "Unknown command: $cmd"
                 ui_info "Run 'devbox help' for available commands."
                 exit 1
             fi
-            # No subcommand or a valid directory path — start a session.
-            cmd_start "$cmd"
             ;;
     esac
 }

@@ -1,10 +1,13 @@
 # Private config overlay — add this to your private configs repo as "Dockerfile".
 #
-# Layers your personal configs (nvim, tmux, zsh, claude) on top of the
-# devbox base image and pre-installs nvim plugins so they're cached.
-# The entrypoint re-copies configs from the read-only mount at startup,
-# so edits to your configs repo take effect without rebuilding.
-# Rebuild the image to re-cache nvim plugins: devbox rebuild
+# Use this for heavy installs (zsh themes, plugins) that should be cached in the
+# Docker image layer. Config files (nvim, tmux, claude, zshrc) are overlaid at
+# startup from the read-only mount — they don't need to be baked in here.
+# Rebuild to update cached installs: devbox rebuild
+#
+# Build context: The build context is set to the PARENT of your configs repo
+# (e.g., ~/.config/devbox/), so COPY paths reference your repo subdirectories
+# directly (e.g., nvim/, tmux/, devbox/claude/).
 #
 # Expected repo structure:
 #   your-configs/
@@ -16,24 +19,19 @@
 #   └── .zshrc              Zsh config (replaces default devbox zshrc)
 #
 # Usage:
-#   export DEVBOX_PRIVATE_CONFIGS=git@github.com:you/configs.git
+#   export DEVBOX_PRIVATE_CONFIGS=~/my-configs  # or a git URL
 #   devbox rebuild    # builds base + this overlay (cached)
 #   devbox            # starts container with your configs
 
 # hadolint ignore=DL3007
 FROM devbox-agent:latest
 
-# Copy configs into the image layer (cached until files change).
-# Comment out any COPY lines for directories you don't have.
-COPY --chown=devbox:devbox claude/ /home/devbox/.claude/
-COPY --chown=devbox:devbox nvim/   /home/devbox/.config/nvim/
-COPY --chown=devbox:devbox tmux/   /home/devbox/.config/tmux/
-COPY --chown=devbox:devbox .zshrc  /home/devbox/.zshrc
-
-# Symlink tmux configs for version compatibility.
-RUN ln -sf /home/devbox/.config/tmux/tmux.conf /home/devbox/.tmux.conf \
-    && ln -sf /home/devbox/.config/tmux/tmux.conf.local /home/devbox/.tmux.conf.local 2>/dev/null || true
-
-# Pre-install nvim plugins (Lazy) — cached until lazy-lock.json changes.
-# This avoids downloading plugins on every container start.
-RUN gosu devbox nvim --headless "+Lazy! sync" +qa 2>/dev/null || true
+# Example: install powerlevel10k and zsh-syntax-highlighting.
+# Uncomment and customize as needed.
+# RUN [ -d /home/devbox/.oh-my-zsh/custom/themes/powerlevel10k ] || \
+#         git clone --depth=1 https://github.com/romkatv/powerlevel10k.git \
+#             /home/devbox/.oh-my-zsh/custom/themes/powerlevel10k && \
+#     [ -d /home/devbox/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting ] || \
+#         git clone --depth=1 https://github.com/zsh-users/zsh-syntax-highlighting.git \
+#             /home/devbox/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting && \
+#     chown -R devbox:devbox /home/devbox/.oh-my-zsh/custom

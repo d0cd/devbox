@@ -16,13 +16,15 @@ All environment variables used by devbox.
 |---|---|---|
 | `HTTP_PROXY` / `HTTPS_PROXY` | `http://proxy:8080` | Route all traffic through mitmproxy |
 | `NO_PROXY` / `no_proxy` | `localhost,127.0.0.1,proxy` | Bypass proxy for local and sidecar connections |
-| `NODE_EXTRA_CA_CERTS` | `/usr/local/share/ca-certificates/mitmproxy-ca-cert.pem` | mitmproxy CA for Node.js |
+| `NODE_EXTRA_CA_CERTS` | `/usr/local/share/ca-certificates/mitmproxy-ca.crt` | mitmproxy CA for Node.js |
 
 ## Secrets (via `~/.devbox/secrets/.env`)
 
 | Variable | Description |
 |---|---|
-| `ANTHROPIC_API_KEY` | Anthropic API key |
+| `ANTHROPIC_API_KEY` | Anthropic API key (pay-per-token via Console) |
+| `ANTHROPIC_AUTH_TOKEN` | Bearer token for LLM gateways/proxies (not for subscription auth) |
+| `GH_TOKEN` | GitHub token (auto-injected from host `gh` CLI if available) |
 | `OPENROUTER_API_KEY` | OpenRouter API key |
 | `GEMINI_API_KEY` | Google Gemini API key |
 | `OPENAI_API_KEY` | OpenAI API key |

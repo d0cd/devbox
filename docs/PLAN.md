@@ -115,6 +115,25 @@
 
 ---
 
+## Future Work
+
+No outstanding items.
+
+## Completed (this session)
+
+- [x] **cmux notifications** — OSC 777 escape sequences written directly to the TTY from Claude Code hooks. No socket forwarding, no file relay — uses the existing terminal protocol chain (hook → TTY → docker exec → cmux). Based on approach from [manaflow-ai/cmux#833](https://github.com/manaflow-ai/cmux/issues/833). Requires devbox user in `tty` group.
+- [x] **`devbox rebuild` without project context** — `container_build()` exports minimal defaults for compose variables needed at parse time.
+- [x] **`devbox secrets set` missing mkdir** — `cmd_secrets()` creates global secrets directory on first access.
+- [x] **Compose env var exports** — `_export_compose_env()` helper reconstructs all compose variables from a project hash. All commands (`shell`, `stop`, `profile`, `logs`, `resize`) now work in fresh shells.
+- [x] **Two-phase entrypoint** — root phase (firewall + CA cert) then gosu to devbox phase (config overlay + hold open). No DAC_OVERRIDE/CHOWN capabilities needed.
+- [x] **CA cert chain fix** — proxy persists both cert AND keypair on shared volume so restarts reuse the same CA. Agent appends cert to system bundle for curl/Python.
+- [x] **Private config overlay** — `DEVBOX_PRIVATE_DIR` resolved from symlink, mounted directly into container. Private policy.yml used as default for new projects.
+- [x] **Claude auth persistence** — `.credentials.json` saved/restored via dedicated bind mount.
+- [x] **Disk usage display** — `devbox status` shows actual container disk usage via `docker ps -s`, not block I/O counters.
+- [x] **Git credential helper** — `gh auth setup-git` configures gh as git credential helper when `GH_TOKEN` is available. Token auto-extracted from host's `gh` CLI at startup.
+
+---
+
 ## Key Technical Risks
 
 | Risk | Impact | Mitigation |

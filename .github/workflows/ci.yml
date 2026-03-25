@@ -80,7 +80,7 @@ jobs:
           docker save devbox-proxy:ci devbox-agent:ci | gzip > /tmp/devbox-images.tar.gz
 
       - name: Upload image artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: devbox-images
           path: /tmp/devbox-images.tar.gz

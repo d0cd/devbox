@@ -30,11 +30,18 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 COPY --from=ghcr.io/astral-sh/uv:0.10.10 /uv /usr/local/bin/uv
 
 # AI CLI tools via npm (pinned versions — cache-friendly, install before git clones).
+# Override with: docker build --build-arg CLAUDE_CODE_VERSION=2.2.0 ...
+# Or: devbox rebuild (picks up latest Dockerfile defaults from devbox update).
 ARG OPENCODE_VERSION=1.2.26
+ARG CLAUDE_CODE_VERSION=2.1.76
+ARG GEMINI_CLI_VERSION=0.33.1
+ARG CODEX_VERSION=0.114.0
+ARG GSD_OPENCODE_VERSION=1.22.1
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
     npm install -g --omit=dev opencode-ai@${OPENCODE_VERSION} \
-    @google/gemini-cli@0.33.1 @openai/codex@0.114.0 @anthropic-ai/claude-code@2.1.76 \
-    gsd-opencode@1.22.1
+    @google/gemini-cli@${GEMINI_CLI_VERSION} @openai/codex@${CODEX_VERSION} \
+    @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
+    gsd-opencode@${GSD_OPENCODE_VERSION}
 
 # GitHub CLI.
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -129,6 +136,13 @@ COPY templates/tmux.conf /etc/skel/.tmux.conf
 # --- Library scripts and profiles ---
 COPY lib/firewall.sh /usr/local/lib/devbox/firewall.sh
 COPY tooling/profiles/ /usr/local/lib/devbox/profiles/
+
+# --- cmux helpers (notifications via OSC 777, status via proxy) ---
+COPY tooling/devbox-notify tooling/devbox-cmux-send tooling/devbox-status /usr/local/bin/
+RUN chmod +x /usr/local/bin/devbox-notify /usr/local/bin/devbox-cmux-send /usr/local/bin/devbox-status
+
+# --- Default Claude Code hooks (cmux notifications on Stop, Permission, etc.) ---
+COPY templates/claude-hooks.json /etc/skel/.claude/settings.json
 
 # --- Entrypoint ---
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh

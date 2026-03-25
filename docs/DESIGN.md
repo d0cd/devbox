@@ -178,7 +178,7 @@ iptables runs as root during Phase 1 of the entrypoint, before dropping to the u
 
 **IPv6 fail-closed:** If `ip6tables -P OUTPUT DROP` fails, `firewall_init` returns non-zero and the container refuses to start. Earlier versions silently continued with partial enforcement — this was changed to prevent IPv6 bypass.
 
-**Health check:** The agent's Docker health check verifies the iptables DNS rule exists (`iptables -C OUTPUT -d 127.0.0.11 -p udp --dport 53 -j ACCEPT`). If iptables isn't active, the container reports unhealthy.
+**Health check:** The agent's Docker health check verifies the iptables DNS rule exists (`iptables -C OUTPUT -d 127.0.0.11 -p udp --dport 53 -j ACCEPT`). If iptables isn't active, the container reports unhealthy. Note: `iptables -C` requires `NET_ADMIN`. The health check runs via `docker exec` (not as a child of the entrypoint), so it gets the container's original capability set — unaffected by the `setpriv` bounding set drop in the main process tree.
 
 #### 2b. mitmproxy (application-level)
 
@@ -218,34 +218,55 @@ env_file:
 
 Secrets files are created with `umask 077` (mode 600). The CLI validates permissions and warns if they've been loosened. File locking (`flock`) prevents concurrent modification races.
 
-The logging proxy captures all outbound API request/response bodies. If a prompt injection tricks an agent into exfiltrating credentials in a request body, the log records it — visible via `devbox logs`.
+#### Proxy-Layer Credential Injection
+
+When API keys are present in the user's secrets files, devbox automatically activates proxy-layer credential injection:
+
+1. Real API keys are passed only to the proxy sidecar (via `DEVBOX_INJECT_*` env vars)
+2. The agent container receives phantom tokens (`sk-devbox-phantom-not-a-real-key`) that satisfy tool startup checks but have no real value
+3. The proxy's `injector.py` addon strips any auth headers the agent sends and injects real credentials based on the destination domain
+
+This means a compromised agent cannot exfiltrate API keys — it literally does not possess them. The provider-to-header mapping is hardcoded in the injector (not configurable by the agent), preventing credential routing to arbitrary domains.
+
+**Supported providers:** Anthropic (`x-api-key`), OpenAI (`Authorization: Bearer`), Gemini (`x-goog-api-key`), OpenRouter (`Authorization: Bearer`), GitHub API (`Authorization: Bearer`).
+
+**GH_TOKEN exception:** `GH_TOKEN` remains in the agent environment because git credential helpers need it client-side for HTTPS operations. The injector still handles `api.github.com` requests, but the token is also available to the agent. This is an accepted trade-off — git operations require the token, and `github.com` is already in the allowlist.
+
+**Escape hatch:** Set `DEVBOX_CREDENTIAL_INJECTION=false` in the environment or `.devboxrc` to disable injection and pass real keys to the agent (pre-v0.4 behavior).
+
+The logging proxy captures all outbound API request/response bodies. If a prompt injection tricks an agent into exfiltrating data in a request body, the log records it — visible via `devbox logs`.
 
 ### Container Hardening
 
 ```yaml
 cap_drop: [ALL]                     # Drop all Linux capabilities
-cap_add: [NET_ADMIN, SETUID, SETGID]  # Firewall init, gosu user switch
+cap_add: [NET_ADMIN, SETUID, SETGID, SETPCAP]  # Firewall, gosu, cap drop
 security_opt: [no-new-privileges:true]  # Prevent privilege escalation
+read_only: true                      # Immutable root filesystem
 tmpfs: /tmp (256MB)                  # Ephemeral temp, size-limited
-pids: 512                           # Prevent fork bombs
+pids: 4096                          # Prevent fork bombs (allows concurrent AI tools)
 memory: 8G (configurable)           # OOM protection
 cpus: 4.0 (configurable)            # CPU quota
 restart: unless-stopped              # Auto-recover from crashes
 ```
 
-`SETUID` and `SETGID` are required for `gosu` (the entrypoint drops from root to the `devbox` user after firewall setup). `no-new-privileges` prevents any process from gaining capabilities beyond what it was started with.
+`SETUID` and `SETGID` are required for `gosu` (the entrypoint drops from root to the `devbox` user after firewall setup). `SETPCAP` is required for `setpriv` to drop `NET_ADMIN` from the bounding set after firewall init. `no-new-privileges` prevents any process from gaining capabilities beyond what it was started with.
+
+**Capability drop after init:** After `firewall_init()` completes, the entrypoint uses `setpriv --bounding-set -net_admin --inh-caps -net_admin` to irrevocably drop `NET_ADMIN` from the bounding set before switching to the unprivileged user. Once removed from the bounding set, no child process can ever regain `NET_ADMIN` — the kernel enforces this. The iptables rules become immutable from inside the container's main process tree.
 
 ### Honest Threat Model
 
 | Threat | Mitigation | Residual risk |
 |--------|-----------|---------------|
 | Agent exfiltrates data | Dual-layer network + domain allowlist | Can still send to allowed domains |
-| Prompt injection via project files | Network layer limits destinations | In-boundary actions cannot be prevented |
-| Credential theft | Runtime injection, never in images, all calls logged | Agent has env vars at runtime |
+| Prompt injection via project files | Network layer limits destinations; credentials not in agent env | In-boundary actions cannot be prevented |
+| Credential theft | Proxy-layer injection — agent gets phantom tokens, real keys never enter container | GH_TOKEN remains in agent for git operations |
 | Git token over-scope | N/A — user responsibility | Token may grant access beyond mounted project |
-| Container escape | `cap_drop: ALL`, `no-new-privileges`, current Docker | Kernel exploits remain possible |
+| Container escape | `cap_drop: ALL`, `no-new-privileges`, NET_ADMIN dropped after init | Kernel exploits remain possible |
+| Firewall modification | NET_ADMIN irrevocably dropped from bounding set after firewall init | `docker exec -u 0` retains container-level caps |
 | DNS tunneling | DNS restricted to Docker resolver (127.0.0.11) | Docker resolver is trusted |
-| IPv6 bypass | `ip6tables -P OUTPUT DROP` | Silent failure if ip6tables unavailable (logged) |
+| IPv6 bypass | `ip6tables -P OUTPUT DROP` (fail-closed — container refuses to start on failure) | Requires ip6tables binary in container |
+| Project file tampering | /workspace is rw by design — agent needs to edit code | Malicious commits, git hook injection possible |
 
 ---
 
@@ -253,12 +274,13 @@ restart: unless-stopped              # Auto-recover from crashes
 
 ### Addon Chain
 
-mitmproxy loads two addons in order:
+mitmproxy loads three addons in order:
 
 1. **`enforcer.py`** — Domain allowlist enforcement
-2. **`logger.py`** — SQLite request/response logging
+2. **`injector.py`** — Proxy-layer credential injection (strip agent auth headers, inject real credentials)
+3. **`logger.py`** — SQLite request/response logging
 
-Both are loaded via `mitmdump -s enforcer.py -s logger.py`. The enforcer runs first — blocked requests still reach the logger (with status 403), providing full audit trails.
+All are loaded via `mitmdump -s enforcer.py -s injector.py -s logger.py`. Order matters: the enforcer blocks disallowed domains before the injector touches headers (blocked flows never receive credentials). The logger runs last, recording the final state.
 
 ### enforcer.py
 
@@ -616,7 +638,7 @@ devbox/
 | Fail-closed enforcer | Empty allowlist on policy error | Security default: if the policy file is missing or malformed, block all traffic rather than allow all |
 | CIDR validation | Regex + semantic check | Regex validates format, separate function validates octets ≤ 255 and prefix ≤ 32 |
 | Default seccomp | Docker's built-in profile | Blocks ~44 dangerous syscalls (ptrace, bpf, etc.) out of the box. Custom profile not needed given cap_drop: ALL. |
-| Mutable rootfs | Not read-only | `read_only: true` would require restructuring the home directory (Oh My Zsh lives in /home/devbox from the image layer; user-setup.sh writes config there). Trade-off: system binaries are writable but the container is ephemeral — persistence requires volume mounts which we control. |
+| Read-only rootfs | `read_only: true` | Root filesystem is immutable. Writable paths use tmpfs mounts (`/home/devbox`, `/tmp`, `/run`, `/var/log`, CA cert dirs). Oh My Zsh lives at `/opt/oh-my-zsh` on the read-only rootfs; user home is populated from `/etc/skel` at startup. |
 
 ---
 
@@ -643,9 +665,9 @@ devbox's architecture was evaluated against production AI isolation tools. Key c
 
 **Isolation depth** — E2B and Firecracker use hardware virtualization (KVM), providing a fundamentally stronger boundary than Docker namespaces/cgroups. A container escape gives host access; a VM escape is orders of magnitude harder. gVisor sits in between as a potential drop-in upgrade.
 
-**Credential brokering** — E2B's egressTransform injects Authorization headers at the proxy layer so secrets never enter the sandbox at all. Coder provisions per-workspace ephemeral credentials via Vault. devbox uses environment variable injection, which means all container processes can read API keys via `/proc/self/environ`.
+**Credential brokering** — E2B's egressTransform injects Authorization headers at the proxy layer so secrets never enter the sandbox at all. Coder provisions per-workspace ephemeral credentials via Vault. devbox now uses a similar proxy-layer injection pattern (`injector.py`) for supported API providers, though `GH_TOKEN` remains in the agent environment for git credential helper compatibility.
 
-**Read-only root filesystem** — production containers typically use `read_only: true` to prevent malware persistence. devbox trades this for simplicity (Oh My Zsh + user-setup.sh writes to /home/devbox). A future improvement could move Oh My Zsh to /opt/ on the read-only rootfs.
+**Read-only root filesystem** — production containers typically use `read_only: true` to prevent malware persistence. devbox now uses `read_only: true` with tmpfs mounts for writable paths and Oh My Zsh installed to `/opt/oh-my-zsh` on the read-only rootfs.
 
 ### Accepted trade-offs
 
@@ -653,6 +675,6 @@ These are deliberate design choices, not oversights:
 
 1. **Docker over Firecracker** — devbox is a single-user local tool. Docker is universally available; Firecracker requires KVM and custom orchestration. The threat model is "prevent accidental data exfiltration by AI agents," not "multi-tenant hostile workloads."
 
-2. **Environment variables over credential brokering** — implementing proxy-layer header injection would mean API keys never enter the container, but it requires per-provider logic (different header formats for Anthropic, OpenAI, etc.) and breaks tools that manage their own auth. For a tool-agnostic environment, env vars are the pragmatic choice.
+2. **Proxy-layer credential injection with GH_TOKEN exception** — API keys for model providers (Anthropic, OpenAI, Gemini, OpenRouter) are injected at the proxy layer via `injector.py` — the agent receives phantom tokens. `GH_TOKEN` is the exception: git credential helpers need it client-side, so it remains in the agent environment. Disable injection entirely with `DEVBOX_CREDENTIAL_INJECTION=false`.
 
 3. **SQLite over encrypted storage** — API logs contain request/response bodies (potentially sensitive). SQLite stores them in plaintext on the host. Encryption (SQLCipher) would add a dependency and key management complexity. For a single-user tool, host filesystem permissions (umask 077) are sufficient; the threat is agent exfiltration, not host compromise.

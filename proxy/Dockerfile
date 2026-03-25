@@ -12,7 +12,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Create non-root user for running the proxy.
 RUN groupadd -g 1000 devbox && useradd -u 1000 -g devbox -d /home/devbox -s /bin/bash devbox
 
-COPY enforcer.py logger.py /proxy/
+COPY enforcer.py injector.py logger.py /proxy/
 
 # /data is where the SQLite API log is written.
 # /ca is the shared volume for CA certs.

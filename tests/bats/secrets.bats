@@ -80,6 +80,23 @@ teardown() {
     [[ "$output" == *"Usage"* ]]
 }
 
+@test "secrets set preserves values containing equals signs" {
+    run cmd_secrets set MY_TOKEN "base64value==with=extra"
+    [ "$status" -eq 0 ]
+    grep -q "MY_TOKEN=base64value==with=extra" "${DEVBOX_DATA}/secrets/.env"
+}
+
+@test "secrets set updates value containing equals signs" {
+    echo "MY_TOKEN=old==value" >>"${DEVBOX_DATA}/secrets/.env"
+    run cmd_secrets set MY_TOKEN "new==value=here"
+    [ "$status" -eq 0 ]
+    grep -q "MY_TOKEN=new==value=here" "${DEVBOX_DATA}/secrets/.env"
+    # Should not have duplicate entries.
+    local count
+    count=$(grep -c "MY_TOKEN=" "${DEVBOX_DATA}/secrets/.env")
+    [ "$count" -eq 1 ]
+}
+
 # --- secrets remove ---
 
 @test "secrets remove deletes key" {

@@ -1,0 +1,53 @@
+{
+  "env": {
+    "DISABLE_AUTOUPDATER": "1"
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "devbox-status set claude idle; devbox-notify 'Claude Code' 'Task complete'",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "devbox-status set claude 'needs input'; devbox-notify 'Claude Code' 'Permission needed'",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "idle_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "devbox-status set claude 'needs input'; devbox-notify 'Claude Code' 'Waiting for input'",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "devbox-status set claude working",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

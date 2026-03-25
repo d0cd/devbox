@@ -6,6 +6,95 @@
 # All functions expect DEVBOX_ROOT, DEVBOX_DATA, and DEVBOX_CONFIG to be set.
 set -euo pipefail
 
+# ---------------------------------------------------------------------------
+# cmux integration (host-side)
+# ---------------------------------------------------------------------------
+# Detect if running inside cmux and set sidebar status/notifications.
+# These are no-ops when cmux is not available.
+
+_cmux_available() {
+    command -v cmux &>/dev/null && [ -n "${CMUX_WORKSPACE_ID:-}" ]
+}
+
+# Set a sidebar status pill for the devbox session.
+_cmux_set_status() {
+    _cmux_available || return 0
+    cmux set-status devbox "$1" 2>/dev/null || true
+}
+
+# Clear the devbox sidebar status pill.
+_cmux_clear_status() {
+    _cmux_available || return 0
+    cmux clear-status devbox 2>/dev/null || true
+}
+
+# Send a cmux notification from the host side.
+_cmux_notify() {
+    _cmux_available || return 0
+    cmux notify --title "${1:-devbox}" --body "${2:-}" 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------------------
+# cmux filtering proxy lifecycle
+# ---------------------------------------------------------------------------
+
+_CMUX_PROXY_PID="${DEVBOX_DATA}/cmux-proxy.pid"
+_CMUX_PROXY_PORT_FILE="${DEVBOX_DATA}/cmux-proxy.port"
+
+# Start the cmux filtering proxy if running inside cmux and not already alive.
+# Exports DEVBOX_CMUX_PROXY_PORT for docker-compose.yml interpolation.
+_cmux_proxy_start() {
+    _cmux_available || return 0
+    [ -n "${CMUX_SOCKET_PATH:-}" ] || return 0
+
+    # Reuse existing proxy if alive.
+    if [ -f "$_CMUX_PROXY_PID" ]; then
+        local pid
+        pid="$(cat "$_CMUX_PROXY_PID" 2>/dev/null)" || true
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            if [ -f "$_CMUX_PROXY_PORT_FILE" ]; then
+                export DEVBOX_CMUX_PROXY_PORT="$(cat "$_CMUX_PROXY_PORT_FILE")"
+                return 0
+            fi
+        fi
+    fi
+
+    # Spawn proxy in background.
+    python3 "${DEVBOX_ROOT}/tooling/cmux-proxy.py" &
+    local proxy_pid=$!
+    disown "$proxy_pid" 2>/dev/null || true
+
+    # Wait for port file (up to 3s).
+    local elapsed=0
+    while [ ! -f "$_CMUX_PROXY_PORT_FILE" ] && [ "$elapsed" -lt 3 ]; do
+        sleep 0.5
+        elapsed=$((elapsed + 1))
+    done
+
+    if [ -f "$_CMUX_PROXY_PORT_FILE" ]; then
+        export DEVBOX_CMUX_PROXY_PORT="$(cat "$_CMUX_PROXY_PORT_FILE")"
+    fi
+}
+
+# Stop the cmux proxy if this is the last running devbox session.
+_cmux_proxy_stop() {
+    [ -f "$_CMUX_PROXY_PID" ] || return 0
+
+    # Don't kill the proxy if other sessions are still running.
+    local remaining
+    remaining="$(_find_devbox_projects)"
+    if [ -n "$remaining" ]; then
+        return 0
+    fi
+
+    local pid
+    pid="$(cat "$_CMUX_PROXY_PID" 2>/dev/null)" || true
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        kill "$pid" 2>/dev/null || true
+    fi
+    rm -f "$_CMUX_PROXY_PID" "$_CMUX_PROXY_PORT_FILE"
+}
+
 # Build compose file arguments. Includes the private override if present.
 # Usage: docker compose $(_compose_file_args) -p "project" up -d
 _compose_file_args() {
@@ -14,6 +103,90 @@ _compose_file_args() {
     if [ -n "$override" ] && [ -f "$override" ]; then
         echo -n " -f ${override}"
     fi
+    # Per-project compose override (custom mounts from devbox mount add).
+    # Validated to contain only volume directives — prevents security escalation.
+    if [ -n "${PROJECT_HASH:-}" ]; then
+        local project_override="${DEVBOX_DATA}/${PROJECT_HASH}/compose.override.yml"
+        if [ -f "$project_override" ] && _validate_compose_override "$project_override"; then
+            echo -n " -f ${project_override}"
+        fi
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Credential injection: proxy secrets and phantom token generation
+# ---------------------------------------------------------------------------
+
+# Known injectable API keys: source env var → proxy env var name.
+# The mapping is intentionally hardcoded — only these keys are eligible
+# for proxy-layer injection. The proxy's injector.py has a matching
+# provider registry with the domain-to-header mapping.
+declare -A _DEVBOX_INJECTABLE_KEYS=(
+    [ANTHROPIC_API_KEY]=DEVBOX_INJECT_ANTHROPIC
+    [OPENAI_API_KEY]=DEVBOX_INJECT_OPENAI
+    [GEMINI_API_KEY]=DEVBOX_INJECT_GEMINI
+    [GOOGLE_API_KEY]=DEVBOX_INJECT_GEMINI
+    [OPENROUTER_API_KEY]=DEVBOX_INJECT_OPENROUTER
+    [GH_TOKEN]=DEVBOX_INJECT_GITHUB
+)
+
+# Keys that should NOT get phantom replacements in the agent env.
+# GH_TOKEN must remain real because git credential helpers need it.
+declare -A _DEVBOX_KEEP_IN_AGENT=(
+    [GH_TOKEN]=1
+)
+
+DEVBOX_PHANTOM_VALUE="sk-devbox-phantom-not-a-real-key"
+
+# Generate proxy secrets file (.proxy.env) with DEVBOX_INJECT_* variables
+# and agent phantom overrides file (.phantom.env).
+# Reads from the global and per-project secrets files.
+_generate_credential_files() {
+    local project_dir="$1"
+    local global_secrets="${DEVBOX_DATA}/secrets/.env"
+    local project_secrets="${project_dir}/secrets/.env"
+    local proxy_env="${project_dir}/secrets/.proxy.env"
+    local phantom_env="${project_dir}/secrets/.phantom.env"
+
+    # Disabled by escape hatch.
+    if [ "${DEVBOX_CREDENTIAL_INJECTION:-true}" = "false" ]; then
+        (umask 077 && true > "$proxy_env" && true > "$phantom_env")
+        return 0
+    fi
+
+    local -A found_keys=()
+
+    # Scan secrets files for injectable keys.
+    local secrets_file
+    for secrets_file in "$global_secrets" "$project_secrets"; do
+        [ -f "$secrets_file" ] || continue
+        while IFS= read -r line || [ -n "$line" ]; do
+            [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            local key="${line%%=*}"
+            local value="${line#*=}"
+            if [ -n "${_DEVBOX_INJECTABLE_KEYS[$key]+_}" ] && [ -n "$value" ]; then
+                found_keys[$key]="$value"
+            fi
+        done < "$secrets_file"
+    done
+
+    # Write proxy secrets and phantom overrides.
+    (
+        umask 077
+        true > "$proxy_env"
+        true > "$phantom_env"
+        local key value proxy_var
+        for key in "${!found_keys[@]}"; do
+            value="${found_keys[$key]}"
+            proxy_var="${_DEVBOX_INJECTABLE_KEYS[$key]}"
+            echo "${proxy_var}=${value}" >> "$proxy_env"
+            # Only generate phantom for keys not in the keep-in-agent list.
+            if [ -z "${_DEVBOX_KEEP_IN_AGENT[$key]+_}" ]; then
+                echo "${key}=${DEVBOX_PHANTOM_VALUE}" >> "$phantom_env"
+            fi
+        done
+    )
 }
 
 # Export all environment variables required by docker-compose.yml interpolation.
@@ -48,6 +221,15 @@ _export_compose_env() {
     export DEVBOX_PROJECT_NAME="$(_project_name_for_hash "$hash")"
     export DEVBOX_MEMORY="${DEVBOX_MEMORY:-8G}"
     export DEVBOX_CPUS="${DEVBOX_CPUS:-4.0}"
+
+    # Generate proxy credential injection and agent phantom token files.
+    _generate_credential_files "$project_dir"
+    export DEVBOX_PROXY_SECRETS_FILE="${project_dir}/secrets/.proxy.env"
+    export DEVBOX_PHANTOM_FILE="${project_dir}/secrets/.phantom.env"
+
+    # Start cmux filtering proxy if running inside cmux.
+    _cmux_proxy_start
+    export DEVBOX_CMUX_PROXY_PORT="${DEVBOX_CMUX_PROXY_PORT:-}"
 }
 
 # Find running devbox compose projects. Outputs one project name per line.
@@ -153,6 +335,9 @@ container_build() {
     export DEVBOX_CLAUDE_DIR="${DEVBOX_CLAUDE_DIR:-/tmp/devbox-claude-data}"
     mkdir -p "${DEVBOX_CLAUDE_DIR}" 2>/dev/null || true
     export PROJECT_PATH="${PROJECT_PATH:-.}"
+    export DEVBOX_PROXY_SECRETS_FILE="${DEVBOX_PROXY_SECRETS_FILE:-/dev/null}"
+    export DEVBOX_PHANTOM_FILE="${DEVBOX_PHANTOM_FILE:-/dev/null}"
+    export DEVBOX_CMUX_PROXY_PORT="${DEVBOX_CMUX_PROXY_PORT:-}"
 
     local compose_args
     compose_args="$(_compose_file_args)"
@@ -203,8 +388,8 @@ _acquire_project_lock() {
 # Stop a background spinner and clear the line.
 _stop_spinner() {
     local pid="$1"
-    kill "$pid" 2>/dev/null
-    wait "$pid" 2>/dev/null
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
     printf "\r"
 }
 
@@ -237,9 +422,12 @@ container_start() {
     running_projects="$(_find_devbox_projects)"
     if echo "$running_projects" | grep -q "^${compose_project}$"; then
         ui_info "Environment already running."
+        _cmux_set_status "running"
         docker compose $compose_args \
             -p "${compose_project}" exec agent gosu devbox zsh
-        return $?
+        local rc=$?
+        _cmux_clear_status
+        return $rc
     fi
 
     # Build base images if they don't exist.
@@ -311,8 +499,10 @@ container_start() {
     _stop_spinner $spinner_pid
     trap - RETURN
     ui_info "Environment ready."
+    _cmux_set_status "running"
     docker compose $compose_args \
         -p "${compose_project}" exec agent gosu devbox zsh
+    _cmux_clear_status
 }
 
 # Open a shell in the running agent container.
@@ -321,7 +511,9 @@ container_shell() {
     local project
     project="$(_require_single_project "$target_name")"
     _export_compose_env "$project"
+    _cmux_set_status "running"
     docker compose $(_compose_file_args) -p "$project" exec agent gosu devbox zsh
+    _cmux_clear_status
 }
 
 # Stop the container stack.
@@ -331,6 +523,7 @@ container_stop() {
     project="$(_require_single_project "$target_name")"
     _export_compose_env "$project"
     docker compose $(_compose_file_args) -p "$project" down
+    _cmux_proxy_stop
 }
 
 # Show the status of running devbox containers with project details.

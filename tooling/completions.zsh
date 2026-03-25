@@ -15,6 +15,7 @@ _devbox() {
         'info:Show container status and project info'
         'profile:Install a language profile'
         'allowlist:View or edit the network allowlist'
+        'mount:Manage per-project volume mounts'
         'secrets:Manage API keys and secrets'
         'logs:Show recent API calls'
         'clean:Clean project data'
@@ -50,6 +51,16 @@ _devbox() {
                 'reset:Reset allowlist to defaults'
             )
             _describe 'subcommand' allowlist_cmds
+            return
+            ;;
+        mount)
+            mount_cmds=(
+                'add:Add a volume mount (project host-path container-path)'
+                'remove:Remove a mount by container path'
+                'rm:Remove a mount (alias)'
+                'list:List custom mounts'
+            )
+            _describe 'subcommand' mount_cmds
             return
             ;;
         secrets)

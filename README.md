@@ -97,6 +97,10 @@ devbox allowlist           # View the network allowlist
 devbox allowlist add X     # Add domain X
 devbox allowlist remove X  # Remove domain X (alias: rm)
 devbox allowlist reset     # Reset allowlist to defaults
+devbox mount add <proj> <host> <container>  # Add a volume mount
+devbox mount add <proj> <host> <container>:ro  # Read-only mount
+devbox mount list [proj]   # List custom mounts
+devbox mount remove <proj> <container-path>  # Remove a mount
 devbox secrets             # Show API keys (values masked)
 devbox secrets set K V     # Set a secret
 devbox secrets edit        # Open secrets in $EDITOR

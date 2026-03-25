@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Set cmux sidebar status, send notifications via the cmux proxy.
+# Falls back to OSC 777 (via devbox-notify) for notifications if the
+# proxy is unavailable.
+#
+# cmux uses two wire protocols:
+#   - Text for sidebar: "set_status key value --tab=UUID"
+#   - JSON-RPC for notifications: {"method":"notification.create",...}
+# The proxy handles workspace injection, so we don't need the UUID here.
+#
+# Usage:
+#   devbox-status set <key> <value>     Set a sidebar status pill
+#   devbox-status clear <key>           Clear a status pill
+#   devbox-status notify <title> <body> Send a notification
+set -euo pipefail
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+    set)
+        key="${1:-}"
+        value="${2:-}"
+        [ -n "$key" ] && [ -n "$value" ] || exit 0
+        # Text protocol: set_status <key> <value>
+        devbox-cmux-send "set_status $key $value"
+        ;;
+    clear)
+        key="${1:-}"
+        [ -n "$key" ] || exit 0
+        # Text protocol: clear_status <key>
+        devbox-cmux-send "clear_status $key"
+        ;;
+    notify)
+        title="${1:-devbox}"
+        body="${2:-}"
+        # Escape double quotes for JSON safety.
+        title="${title//\"/\\\"}"
+        body="${body//\"/\\\"}"
+        # JSON-RPC: notification.create
+        devbox-cmux-send "{\"id\":\"n\",\"method\":\"notification.create\",\"params\":{\"title\":\"$title\",\"body\":\"$body\"}}" \
+            || devbox-notify "$title" "$body" 2>/dev/null \
+            || true
+        ;;
+    *)
+        exit 0
+        ;;
+esac

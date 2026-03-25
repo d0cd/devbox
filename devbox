@@ -10,6 +10,7 @@
 #   devbox info              Show container status and project info
 #   devbox profile [name]    Install a language profile (interactive if no name)
 #   devbox allowlist [cmd]   View/edit the network allowlist
+#   devbox mount [cmd]       Manage per-project volume mounts
 #   devbox secrets [cmd]     Manage API keys and secrets
 #   devbox logs              Show recent API calls
 #   devbox clean [--all]     Clean project data (--all for everything)
@@ -42,6 +43,7 @@ source "${DEVBOX_ROOT}/lib/firewall.sh"
 source "${DEVBOX_ROOT}/lib/container.sh"
 source "${DEVBOX_ROOT}/lib/profile.sh"
 source "${DEVBOX_ROOT}/lib/allowlist.sh"
+source "${DEVBOX_ROOT}/lib/mount.sh"
 source "${DEVBOX_ROOT}/lib/secrets.sh"
 source "${DEVBOX_ROOT}/lib/commands.sh"
 
@@ -63,8 +65,8 @@ main() {
 
     # Commands that require Docker must have the daemon running.
     case "$cmd" in
-        help | --help | -h | version | --version | -v | completions | secrets)
-            # Help, version, completions, and secrets management never need Docker.
+        help | --help | -h | version | --version | -v | completions | secrets | mount)
+            # Help, version, completions, secrets, and mount management never need Docker.
             ;;
         *)
             if ! docker info &>/dev/null; then
@@ -111,6 +113,10 @@ main() {
         allowlist)
             shift
             cmd_allowlist "$@"
+            ;;
+        mount)
+            shift
+            cmd_mount "$@"
             ;;
         secrets)
             shift

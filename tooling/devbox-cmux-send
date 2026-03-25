@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Send a message to the cmux filtering proxy on the host.
+# Supports both text protocol (sidebar) and JSON-RPC (notifications).
+#
+# Usage: devbox-cmux-send 'set_status claude working'
+#        devbox-cmux-send '{"id":"n","method":"notification.create",...}'
+#
+# Silently exits 0 if the proxy is unavailable (non-cmux environments,
+# proxy not running, network issues). This makes it safe to call
+# unconditionally from hooks.
+set -euo pipefail
+
+[ -n "${DEVBOX_CMUX_PROXY_PORT:-}" ] || exit 0
+
+msg="${1:-}"
+[ -n "$msg" ] || exit 0
+
+# Use bash /dev/tcp builtin — no dependency on nc or socat.
+# host.docker.internal resolves to the host on both OrbStack and Docker Desktop.
+if exec 3<>/dev/tcp/host.docker.internal/"$DEVBOX_CMUX_PROXY_PORT" 2>/dev/null; then
+    printf '%s\n' "$msg" >&3
+    # Read and discard response (2s timeout).
+    timeout 2 head -1 <&3 >/dev/null 2>&1 || true
+    exec 3>&-
+fi

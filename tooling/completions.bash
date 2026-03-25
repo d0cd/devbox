@@ -10,7 +10,7 @@ _devbox_completions() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD - 1]}"
 
-    local commands="start resume stop status info profile allowlist secrets logs clean resize rebuild update completions help version"
+    local commands="start resume stop status info profile allowlist mount secrets logs clean resize rebuild update completions help version"
 
     case "$prev" in
         devbox)
@@ -36,6 +36,12 @@ _devbox_completions() {
         allowlist)
             if [ "${COMP_WORDS[1]}" = "allowlist" ]; then
                 mapfile -t COMPREPLY < <(compgen -W "show add remove rm reset" -- "$cur")
+                return
+            fi
+            ;;
+        mount)
+            if [ "${COMP_WORDS[1]}" = "mount" ]; then
+                mapfile -t COMPREPLY < <(compgen -W "add remove rm list" -- "$cur")
                 return
             fi
             ;;

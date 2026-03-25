@@ -13,14 +13,14 @@ repos:
       - id: shellcheck
         # SC2046/SC2086: docker compose args intentionally need word splitting (-f file1 -f file2)
         args: ["-e", "SC1091,SC2015,SC2016,SC2034,SC2046,SC2086,SC2119,SC2120,SC2155,SC2317,SC2329"]
-        files: \.(sh|bash)$|^devbox$|entrypoint\.sh$
+        files: \.(sh|bash)$|^devbox$|entrypoint\.sh$|^tooling/devbox-
 
   - repo: https://github.com/scop/pre-commit-shfmt
     rev: v3.10.0-1
     hooks:
       - id: shfmt
         args: ["-i", "4", "-ci", "-bn"]
-        files: \.(sh|bash)$|^devbox$|entrypoint\.sh$
+        files: \.(sh|bash)$|^devbox$|entrypoint\.sh$|^tooling/devbox-
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.4.4

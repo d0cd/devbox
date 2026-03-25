@@ -53,30 +53,14 @@ _overlay_private() {
     fi
 }
 
+# ~/.claude/ is a persistent bind mount (survives restarts).
+# Overlay private configs on top — fresh configs each start, persistent state preserved.
 _overlay_private /devbox/.private/claude "${DEVBOX_HOME}/.claude"
 
 # Copy host's claude.json (global state, account metadata) if available.
-# This gives Claude Code the account context without re-login.
 if [ -f /devbox/.private/claude.json ]; then
     cp /devbox/.private/claude.json "${DEVBOX_HOME}/.claude.json"
 fi
-
-# --- Claude Code auth persistence ---
-# Restore saved credentials from persistent volume. Claude Code writes
-# .credentials.json at login; we save it on shutdown via a trap.
-CLAUDE_PERSIST="${DEVBOX_HOME}/.claude-persist"
-if [ -d "$CLAUDE_PERSIST" ] && [ -f "${CLAUDE_PERSIST}/.credentials.json" ]; then
-    cp "${CLAUDE_PERSIST}/.credentials.json" "${DEVBOX_HOME}/.claude/.credentials.json"
-    chmod 600 "${DEVBOX_HOME}/.claude/.credentials.json"
-fi
-# Save credentials on exit so they survive container restarts.
-_save_claude_auth() {
-    if [ -d "$CLAUDE_PERSIST" ] && [ -f "${DEVBOX_HOME}/.claude/.credentials.json" ]; then
-        cp "${DEVBOX_HOME}/.claude/.credentials.json" "${CLAUDE_PERSIST}/.credentials.json"
-        chmod 600 "${CLAUDE_PERSIST}/.credentials.json"
-    fi
-}
-trap _save_claude_auth EXIT TERM INT
 _overlay_private /devbox/.private/opencode "${DEVBOX_HOME}/.config/opencode"
 _overlay_private /devbox/.private/nvim "${DEVBOX_HOME}/.config/nvim"
 _overlay_private /devbox/.private/tmux "${DEVBOX_HOME}/.config/tmux"
@@ -107,8 +91,8 @@ fi
 cd /workspace
 if [ $# -eq 0 ]; then
     echo "[entrypoint] Environment ready. Accepting exec sessions."
-    # Run tail in the background and wait — keeps bash as PID 1 so traps
-    # (like _save_claude_auth) fire on SIGTERM/container stop.
+    # Run tail in the background and wait — keeps bash as PID 1 so it
+    # receives SIGTERM on container stop and shuts down cleanly.
     tail -f /dev/null &
     wait $!
 else

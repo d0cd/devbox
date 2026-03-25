@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Send an OSC 777 notification via the controlling terminal.
+#
+# Used by Claude Code hooks inside the container to notify cmux (or any
+# terminal that supports OSC 777 / RXVT notification protocol).
+#
+# Usage: devbox-notify "Title" "Body"
+#        devbox-notify "Title"          (body defaults to empty)
+#
+# Claude Code hooks capture stdout, so we write directly to the TTY device.
+# Finds the TTY by walking the process tree (docker exec allocates a PTY
+# that isn't accessible via /dev/tty in subprocesses).
+#
+# Based on: https://github.com/manaflow-ai/cmux/issues/833
+set -euo pipefail
+
+title="${1:-devbox}"
+body="${2:-}"
+
+find_tty() {
+    # Walk parent processes to find one with a TTY.
+    local pid=$$
+    for _ in 1 2 3 4 5 6 7 8; do
+        pid=$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' ')
+        [ -z "$pid" ] && return 1
+        local tty_name
+        tty_name=$(ps -p "$pid" -o tty= 2>/dev/null | tr -d ' ')
+        if [ -n "$tty_name" ] && [ "$tty_name" != "?" ]; then
+            echo "/dev/$tty_name"
+            return 0
+        fi
+    done
+    return 1
+}
+
+TTY=$(find_tty) || exit 0
+printf '\033]777;notify;%s;%s\a' "$title" "$body" > "$TTY" 2>/dev/null || true

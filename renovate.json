@@ -1,0 +1,49 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "fileMatch": ["^Dockerfile$"],
+      "matchStrings": ["ARG CLAUDE_CODE_VERSION=(?<currentValue>\\S+)"],
+      "depNameTemplate": "@anthropic-ai/claude-code",
+      "datasourceTemplate": "npm"
+    },
+    {
+      "customType": "regex",
+      "fileMatch": ["^Dockerfile$"],
+      "matchStrings": ["ARG OPENCODE_VERSION=(?<currentValue>\\S+)"],
+      "depNameTemplate": "opencode-ai",
+      "datasourceTemplate": "npm"
+    },
+    {
+      "customType": "regex",
+      "fileMatch": ["^Dockerfile$"],
+      "matchStrings": ["ARG GEMINI_CLI_VERSION=(?<currentValue>\\S+)"],
+      "depNameTemplate": "@google/gemini-cli",
+      "datasourceTemplate": "npm"
+    },
+    {
+      "customType": "regex",
+      "fileMatch": ["^Dockerfile$"],
+      "matchStrings": ["ARG CODEX_VERSION=(?<currentValue>\\S+)"],
+      "depNameTemplate": "@openai/codex",
+      "datasourceTemplate": "npm"
+    },
+    {
+      "customType": "regex",
+      "fileMatch": ["^Dockerfile$"],
+      "matchStrings": ["ARG GSD_OPENCODE_VERSION=(?<currentValue>\\S+)"],
+      "depNameTemplate": "gsd-opencode",
+      "datasourceTemplate": "npm"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Group all AI CLI tool updates in a single PR",
+      "matchDatasources": ["npm"],
+      "groupName": "AI CLI tools",
+      "schedule": ["every weekend"]
+    }
+  ]
+}

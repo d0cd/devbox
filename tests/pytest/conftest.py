@@ -47,6 +47,38 @@ def mock_flow():
     return flow
 
 
+class MutableHeaders(dict):
+    """Dict subclass that mimics mitmproxy Headers for testing.
+
+    Supports case-insensitive lookup and deletion like mitmproxy's Headers.
+    """
+
+    def __contains__(self, key):
+        return super().__contains__(key.lower())
+
+    def __getitem__(self, key):
+        return super().__getitem__(key.lower())
+
+    def __setitem__(self, key, value):
+        super().__setitem__(key.lower(), value)
+
+    def __delitem__(self, key):
+        super().__delitem__(key.lower())
+
+    def get(self, key, default=None):
+        return super().get(key.lower(), default)
+
+
+def make_injector_flow(host, *, headers=None, blocked=False):
+    """Create a mock flow for injector tests with mutable headers."""
+    flow = MagicMock()
+    flow.request.pretty_host = host
+    flow.request.headers = MutableHeaders(headers or {})
+    flow.response = MagicMock() if blocked else None
+    flow.metadata = {}
+    return flow
+
+
 @pytest.fixture
 def temp_policy(tmp_path):
     """Create a temporary policy file."""

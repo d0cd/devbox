@@ -1,28 +1,20 @@
 # devbox zsh configuration.
-# Sourced inside the agent container.
-
-# Powerlevel10k instant prompt (must be at the top, before any output).
-if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
-    source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
-fi
+# Sourced inside the agent container. Override via private config overlay.
 
 # Oh My Zsh setup — installed to /opt for read-only rootfs compatibility.
 export ZSH="/opt/oh-my-zsh"
-ZSH_THEME="powerlevel10k/powerlevel10k"
+ZSH_THEME="robbyrussell"
 
 # Plugins.
 plugins=(
     git
-    docker
-    fzf
-    history
-    colored-man-pages
+    zsh-syntax-highlighting
 )
 
 source "$ZSH/oh-my-zsh.sh"
 
-# Source p10k config if it exists.
-[[ -f ~/.p10k.zsh ]] && source ~/.p10k.zsh
+# Simple devbox indicator in prompt.
+PROMPT='%F{cyan}[devbox:${DEVBOX_PROJECT:-workspace}]%f %F{green}%~%f $(git_prompt_info)%# '
 
 # Persist shell history to a mounted volume so it survives container restarts.
 export HISTFILE=/data/history/.zsh_history
@@ -35,23 +27,5 @@ export VISUAL=nvim
 alias vi='nvim'
 alias vim='nvim'
 
-# devbox-specific aliases.
-alias ll='ls -alF'
-alias la='ls -A'
-alias l='ls -CF'
-alias gs='git status'
-alias gd='git diff'
-alias gl='git log --oneline -20'
-
-# Workspace is always /workspace.
-cd /workspace 2>/dev/null || true
-
-# Show project info on first shell.
-if [ -z "${DEVBOX_GREETED:-}" ]; then
-    export DEVBOX_GREETED=1
-    echo ""
-    echo "devbox agent container"
-    echo "  workspace: /workspace"
-    echo "  proxy:     ${HTTP_PROXY:-not set}"
-    echo ""
-fi
+# Don't store commands with a leading space in history.
+setopt HIST_IGNORE_SPACE

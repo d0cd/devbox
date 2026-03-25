@@ -17,7 +17,7 @@ _load_devboxrc() {
     local rc_file="${1:-.}/.devboxrc"
     [ -f "$rc_file" ] || return 0
 
-    local allowed_vars="DEVBOX_BRIDGE_SUBNET DEVBOX_RELOAD_INTERVAL DEVBOX_PRIVATE_CONFIGS DEVBOX_MEMORY DEVBOX_CPUS DEVBOX_NAME"
+    local allowed_vars="DEVBOX_BRIDGE_SUBNET DEVBOX_RELOAD_INTERVAL DEVBOX_PRIVATE_CONFIGS DEVBOX_MEMORY DEVBOX_CPUS DEVBOX_NAME DEVBOX_CREDENTIAL_INJECTION"
     local line_num=0
     while IFS= read -r line || [ -n "$line" ]; do
         line_num=$((line_num + 1))
@@ -88,6 +88,13 @@ _load_devboxrc() {
                     continue
                 fi
                 ;;
+            DEVBOX_CREDENTIAL_INJECTION)
+                # Boolean: true or false.
+                if [[ ! "$value" =~ ^(true|false)$ ]]; then
+                    ui_warn ".devboxrc:${line_num}: '${key}' must be 'true' or 'false', skipping"
+                    continue
+                fi
+                ;;
         esac
         # Export only if not already set (env takes precedence over file).
         if [ -z "${!key:-}" ]; then
@@ -127,10 +134,8 @@ _project_name_for_hash() {
     local dir="${DEVBOX_DATA}/${hash}"
     if [ -f "${dir}/.project_name" ]; then
         cat "${dir}/.project_name"
-    elif [ -f "${dir}/.project_path" ]; then
-        basename "$(cat "${dir}/.project_path")"
     else
-        echo "$hash"
+        basename "$(cat "${dir}/.project_path" 2>/dev/null || echo "$hash")"
     fi
 }
 
@@ -532,6 +537,79 @@ cmd_profile() {
     ui_info "Profile '$name' installed successfully."
 }
 
+cmd_mount() {
+    local subcmd="${1:-}"
+    shift 2>/dev/null || true
+
+    case "$subcmd" in
+        add)
+            local name="${1:-}"
+            local host_path="${2:-}"
+            local container_path="${3:-}"
+            if [ -z "$name" ] || [ -z "$host_path" ] || [ -z "$container_path" ]; then
+                ui_error "Usage: devbox mount add <project> <host-path> <container-path>[:ro]"
+                return 1
+            fi
+            # Parse :ro or :rw suffix from container path.
+            local mode="rw"
+            if [[ "$container_path" == *:ro ]]; then
+                mode="ro"
+                container_path="${container_path%:ro}"
+            elif [[ "$container_path" == *:rw ]]; then
+                container_path="${container_path%:rw}"
+            elif [[ "$container_path" == *:* ]]; then
+                ui_error "Invalid mount suffix. Use :ro or :rw (e.g., /mnt/data:ro)"
+                return 1
+            fi
+            local override_file
+            override_file="$(_mount_override_file "$name")" || return 1
+            # Expand ~ in host path.
+            host_path="${host_path/#\~/$HOME}"
+            mount_add "$override_file" "$host_path" "$container_path" "$mode"
+            ;;
+        remove | rm)
+            local name="${1:-}"
+            local container_path="${2:-}"
+            if [ -z "$name" ] || [ -z "$container_path" ]; then
+                ui_error "Usage: devbox mount remove <project> <container-path>"
+                return 1
+            fi
+            local override_file
+            override_file="$(_mount_override_file "$name")" || return 1
+            mount_remove "$override_file" "$container_path"
+            ;;
+        list | ls | "")
+            local name="${1:-}"
+            local override_file
+            override_file="$(_mount_override_file "$name")" || return 1
+            mount_list "$override_file"
+            ;;
+        help | --help | -h)
+            cat <<'MHELP'
+Usage: devbox mount <command> <project> [args]
+
+Commands:
+  add <project> <host-path> <container-path>[:ro]   Add a volume mount
+  remove <project> <container-path>                 Remove a mount
+  list [project]                                    List custom mounts
+
+Examples:
+  devbox mount add ralph ~/shared-data /mnt/data
+  devbox mount add ralph ~/certs /mnt/certs:ro
+  devbox mount list ralph
+  devbox mount remove ralph /mnt/data
+
+Mounts take effect on next start. Restart with: devbox stop <name> && devbox start <name>
+MHELP
+            ;;
+        *)
+            ui_error "Unknown mount command: '$subcmd'"
+            ui_info "Usage: devbox mount [add|remove|list] <project> [args]"
+            return 1
+            ;;
+    esac
+}
+
 cmd_allowlist() {
     local subcmd="${1:-}"
     shift 2>/dev/null || true
@@ -848,6 +926,9 @@ USAGE:
   devbox allowlist add X [Y ...]  Add domain(s) (supports *.domain.com wildcards)
   devbox allowlist remove X  Remove domain X (alias: rm)
   devbox allowlist reset   Reset allowlist to defaults
+  devbox mount add <proj> <host> <container>[:ro]  Add a volume mount
+  devbox mount list [proj]  List custom mounts
+  devbox mount remove <proj> <container-path>  Remove a mount
   devbox secrets           Show API keys (values masked)
   devbox secrets set K V   Set a secret (e.g., devbox secrets set ANTHROPIC_API_KEY sk-...)
   devbox secrets set --project K V  Set a per-project secret

@@ -5,8 +5,8 @@
 #   Phase 1 (root): firewall + CA certificate — requires NET_ADMIN and system paths.
 #   Phase 2 (devbox): user-setup.sh — git identity, config overlay, hold open.
 #
-# This structure keeps cap_drop: ALL + cap_add: NET_ADMIN only.
-# No DAC_OVERRIDE, CHOWN, or FOWNER needed.
+# Capabilities: cap_drop ALL + cap_add NET_ADMIN, SETUID, SETGID, SETPCAP.
+# SETUID/SETGID for gosu privilege drop. SETPCAP for setpriv bounding set drop.
 set -euo pipefail
 
 # =========================================================================
@@ -96,4 +96,11 @@ export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 # =========================================================================
 # Phase 2: Drop to unprivileged user — config overlay and hold container open
 # =========================================================================
-exec gosu devbox /usr/local/bin/user-setup.sh "$@"
+
+# Irrevocably drop NET_ADMIN from the bounding set before switching to
+# the unprivileged user. Once dropped, no child process can ever regain
+# it — the kernel enforces this. This makes the iptables rules immutable
+# from inside the container's main process tree.
+# setpriv ships with util-linux (always present in Ubuntu 24.04).
+exec setpriv --no-new-privs --bounding-set -net_admin --inh-caps -net_admin \
+    -- gosu devbox /usr/local/bin/user-setup.sh "$@"

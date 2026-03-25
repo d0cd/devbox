@@ -129,6 +129,13 @@ jobs:
           ignore-unfixed: true
           exit-code: '1'
           scanners: 'vuln'
+      # npm audit — catches known vulnerabilities in AI CLI tools
+      # (claude-code, opencode, gemini-cli, codex, etc.).
+      - name: npm audit (agent image)
+        continue-on-error: true
+        run: |
+          docker run --rm --entrypoint "" devbox-agent:ci \
+            bash -c "npm audit --omit=dev 2>&1 || true"
 
   smoke-test:
     name: Smoke test
@@ -295,19 +302,25 @@ jobs:
           DEVBOX_SECRETS_FILE: /tmp/devbox-secrets.env
           DEVBOX_PROJECT_SECRETS_FILE: /tmp/devbox-project-secrets.env
           DEVBOX_CONFIG: /tmp/devbox-config
+          DEVBOX_PRIVATE_DIR: /tmp/devbox-private
+          DEVBOX_CLAUDE_DIR: /tmp/devbox-claude
+          DEVBOX_PROJECT_NAME: ci-test
+          DEVBOX_PROXY_SECRETS_FILE: /dev/null
+          DEVBOX_PHANTOM_FILE: /dev/null
         run: |
           # Create required directories and files.
-          mkdir -p /tmp/devbox-logs /tmp/devbox-memory /tmp/devbox-history /tmp/devbox-config/opencode
-          # Make log dir writable by proxy's devbox user (runs as non-root inside container).
-          chmod 777 /tmp/devbox-logs
+          mkdir -p /tmp/devbox-logs /tmp/devbox-memory /tmp/devbox-history \
+                   /tmp/devbox-config/opencode /tmp/devbox-private /tmp/devbox-claude
+          # Make dirs writable by container's devbox user (uid 1000).
+          chmod 777 /tmp/devbox-logs /tmp/devbox-claude
           echo "# CI test secrets (no real keys)" > /tmp/devbox-secrets.env
           echo "# CI project secrets" > /tmp/devbox-project-secrets.env
           echo '{}' > /tmp/devbox-config/opencode/opencode.json
 
-          # Start only the proxy (agent needs NET_ADMIN for iptables).
-          # Publish port 8080 for host-side testing (compose has no ports mapping).
+          # Start the full stack (proxy + agent).
+          # Publish port 8080 for host-side proxy testing.
           printf 'services:\n  proxy:\n    ports:\n      - "8080:8080"\n' > /tmp/compose-ci-override.yml
-          docker compose -f docker-compose.yml -f /tmp/compose-ci-override.yml -p devbox-ci up -d proxy
+          docker compose -f docker-compose.yml -f /tmp/compose-ci-override.yml -p devbox-ci up -d
 
           # Wait for proxy health check.
           TIMEOUT=30
@@ -327,6 +340,57 @@ jobs:
             exit 1
           fi
 
+          # Wait for agent to be healthy (firewall active).
+          ELAPSED=0
+          while [ "$ELAPSED" -lt 60 ]; do
+            STATUS=$(docker inspect --format='{{.State.Health.Status}}' devbox-ci-agent-1 2>/dev/null || echo "starting")
+            if [ "$STATUS" = "healthy" ]; then
+              echo "Agent healthy after ${ELAPSED}s"
+              break
+            fi
+            # Fail fast if agent exited.
+            STATE=$(docker inspect --format='{{.State.Status}}' devbox-ci-agent-1 2>/dev/null || echo "unknown")
+            if [ "$STATE" = "exited" ] || [ "$STATE" = "dead" ]; then
+              echo "FAIL: Agent container exited"
+              docker compose -p devbox-ci logs agent
+              exit 1
+            fi
+            sleep 2
+            ELAPSED=$((ELAPSED + 2))
+          done
+          if [ "$ELAPSED" -ge 60 ]; then
+            echo "FAIL: Agent did not become healthy after 60s"
+            docker compose -p devbox-ci logs agent
+            exit 1
+          fi
+
+          # Verify agent entrypoint completed: firewall active + user-setup.sh ran.
+          echo "--- Agent entrypoint verification ---"
+          # Check iptables rules are active.
+          docker exec devbox-ci-agent-1 iptables -L OUTPUT -n | head -10
+          # Check /etc/skel was copied to /home/devbox (read_only rootfs).
+          docker exec devbox-ci-agent-1 gosu devbox test -f /home/devbox/.zshrc \
+            && echo "OK: .zshrc populated from /etc/skel" \
+            || { echo "FAIL: .zshrc not found in /home/devbox"; exit 1; }
+          # Check CA cert was installed.
+          docker exec devbox-ci-agent-1 test -f /usr/local/share/ca-certificates/mitmproxy-ca.crt \
+            && echo "OK: CA cert installed" \
+            || { echo "FAIL: CA cert not found"; exit 1; }
+          # Check devbox-notify and cmux helpers are available.
+          docker exec devbox-ci-agent-1 gosu devbox which devbox-notify \
+            && echo "OK: devbox-notify available" \
+            || { echo "FAIL: devbox-notify not found"; exit 1; }
+          docker exec devbox-ci-agent-1 gosu devbox which devbox-cmux-send \
+            && echo "OK: devbox-cmux-send available" \
+            || { echo "FAIL: devbox-cmux-send not found"; exit 1; }
+          docker exec devbox-ci-agent-1 gosu devbox which devbox-status \
+            && echo "OK: devbox-status available" \
+            || { echo "FAIL: devbox-status not found"; exit 1; }
+          # Check Claude Code hooks config exists.
+          docker exec devbox-ci-agent-1 gosu devbox test -f /home/devbox/.claude/settings.json \
+            && echo "OK: Claude Code hooks config exists" \
+            || { echo "FAIL: Claude Code hooks config not found"; exit 1; }
+
           # Test: allowed domain should pass through proxy.
           STATUS=$(curl -s -o /dev/null -w '%{http_code}' -x http://localhost:8080 http://api.anthropic.com/ || true)
           echo "Allowed domain status: $STATUS"
@@ -343,13 +407,13 @@ jobs:
             exit 1
           fi
 
-          # Verify API log database was created and has the test requests.
+          # Verify API log database was created.
           if [ ! -f /tmp/devbox-logs/api.db ]; then
             echo "FAIL: API log database not created"
             exit 1
           fi
 
-          echo "Compose integration test passed"
+          echo "Compose integration test passed (proxy + agent)"
       - name: Cleanup
         if: always()
         run: docker compose -p devbox-ci down -v 2>/dev/null || true

@@ -126,22 +126,28 @@ class Logger:
     def load(self, loader: object) -> None:
         """Initialize the SQLite database and schema."""
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self._open_db()
+        except sqlite3.DatabaseError as e:
+            if "malformed" in str(e) or "corrupt" in str(e):
+                ctx.log.warn(f"[logger] Database corrupted on load, recreating: {e}")
+                self._recreate_db()
+            else:
+                raise
+
+    def _open_db(self) -> None:
+        """Open and initialize the database."""
         self.db = sqlite3.connect(str(DB_PATH), timeout=5.0)
-        # WAL mode reduces write contention with concurrent readers.
         self.db.execute("PRAGMA journal_mode=WAL")
-        # NORMAL sync is safe with WAL and reduces write latency.
         self.db.execute("PRAGMA synchronous=NORMAL")
-        # Limit WAL file size to prevent unbounded growth.
         self.db.execute("PRAGMA journal_size_limit=67108864")
-        # Incremental auto-vacuum reclaims space from deleted rows.
         self.db.execute("PRAGMA auto_vacuum=INCREMENTAL")
         _init_schema(self.db)
-        # Prune old rows on startup.
         pruned = _prune(self.db)
         if pruned > 0:
-            ctx.log.info(f"Pruned {pruned} old log rows")
+            ctx.log.info(f"[logger] Pruned {pruned} old log rows")
         ctx.log.info(
-            f"Logger initialized, writing to {DB_PATH} (schema v{SCHEMA_VERSION})"
+            f"[logger] Initialized, writing to {DB_PATH} (schema v{SCHEMA_VERSION})"
         )
 
     def request(self, flow: http.HTTPFlow) -> None:
@@ -190,9 +196,33 @@ class Logger:
             if self._insert_count % 1000 == 0:
                 pruned = _prune(self.db)
                 if pruned > 0:
-                    ctx.log.info(f"Pruned {pruned} old log rows")
+                    ctx.log.info(f"[logger] Pruned {pruned} old log rows")
         except (sqlite3.Error, UnicodeDecodeError) as e:
-            ctx.log.warn(f"Failed to log request: {e}")
+            err_msg = str(e)
+            if "malformed" in err_msg or "corrupt" in err_msg:
+                ctx.log.warn(f"[logger] Database corrupted, recreating: {e}")
+                self._recreate_db()
+            else:
+                ctx.log.warn(f"[logger] Failed to log request: {e}")
+
+    def _recreate_db(self) -> None:
+        """Close, delete, and reinitialize the database after corruption."""
+        try:
+            if self.db is not None:
+                self.db.close()
+                self.db = None
+            DB_PATH.unlink(missing_ok=True)
+            # Also remove WAL/SHM files.
+            DB_PATH.with_suffix(".db-wal").unlink(missing_ok=True)
+            DB_PATH.with_suffix(".db-shm").unlink(missing_ok=True)
+            self.db = sqlite3.connect(str(DB_PATH), timeout=5.0)
+            self.db.execute("PRAGMA journal_mode=WAL")
+            self.db.execute("PRAGMA synchronous=NORMAL")
+            _init_schema(self.db)
+            ctx.log.info("[logger] Database recreated after corruption")
+        except Exception as e2:
+            ctx.log.error(f"[logger] Failed to recreate database: {e2}")
+            self.db = None
 
     def done(self) -> None:
         """Close the database on shutdown."""

@@ -10,6 +10,9 @@ allowed:
   - api.anthropic.com          # Claude API
   - claude.ai                  # Claude Code authentication
   - platform.claude.com        # Claude Code authentication (Console)
+  - mcp-proxy.anthropic.com    # Claude Code MCP proxy
+  - code.claude.com            # Claude Code plugins and docs
+  - shipyard.build             # Claude Code plugin hosting
   - openrouter.ai              # OpenRouter (multi-model gateway)
   - generativelanguage.googleapis.com  # Gemini API
   - api.openai.com             # OpenAI / Codex API

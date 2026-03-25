@@ -47,7 +47,7 @@ set -euo pipefail
 ) 200>/ca/.ca-lock
 
 # Validate addon files exist and have no syntax errors before starting anything.
-for addon in /proxy/enforcer.py /proxy/logger.py; do
+for addon in /proxy/enforcer.py /proxy/injector.py /proxy/logger.py; do
     if [ ! -f "$addon" ]; then
         echo "[proxy] FATAL: Addon not found: $addon"
         exit 1
@@ -63,11 +63,14 @@ done
 mkdir -p /data
 touch /data/api.db
 
-# Start mitmproxy with enforcer and logger addons.
+# Start mitmproxy with enforcer, injector, and logger addons.
+# Order matters: enforcer blocks disallowed domains first, injector adds
+# credentials to allowed requests, logger records everything last.
 echo "[proxy] Starting mitmproxy enforcer on port 8080..."
 exec mitmdump \
     --set confdir=/home/devbox/.mitmproxy \
     -s /proxy/enforcer.py \
+    -s /proxy/injector.py \
     -s /proxy/logger.py \
     --listen-port 8080 \
     --set block_global=false

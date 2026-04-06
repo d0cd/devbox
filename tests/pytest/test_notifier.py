@@ -3,9 +3,8 @@
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
 
-from notifier import CmuxNotifier, DEVBOX_PATH_PREFIX
+from notifier import CmuxNotifier
 
 
 class TestRequestRouting:
@@ -111,6 +110,78 @@ class TestHandleStatus:
         flow = MagicMock()
         flow.request.get_content.side_effect = Exception("decode error")
         n._handle_status(flow)
+        assert flow.response.status_code == 200
+
+
+class TestHandleClaudeHook:
+    """Verify Claude Code hook forwarding."""
+
+    def test_forwards_hook_as_jsonrpc(self):
+        n = CmuxNotifier()
+        flow = MagicMock()
+        flow.request.get_content.return_value = json.dumps(
+            {"event": "stop", "data": {"message": "done"}}
+        ).encode()
+        with patch.object(n, "_send_to_proxy") as mock_send:
+            n._handle_claude_hook(flow)
+        payload = mock_send.call_args[0][0]
+        msg = json.loads(payload.rstrip("\n"))
+        assert msg["method"] == "claude-hook.stop"
+        assert msg["params"] == {"message": "done"}
+        assert msg["id"] == "claude-hook-stop"
+        assert flow.response.status_code == 200
+
+    def test_missing_event_returns_400(self):
+        n = CmuxNotifier()
+        flow = MagicMock()
+        flow.request.get_content.return_value = json.dumps(
+            {"data": {"message": "no event"}}
+        ).encode()
+        n._handle_claude_hook(flow)
+        assert flow.response.status_code == 400
+
+    def test_empty_event_returns_400(self):
+        n = CmuxNotifier()
+        flow = MagicMock()
+        flow.request.get_content.return_value = json.dumps(
+            {"event": "", "data": {}}
+        ).encode()
+        n._handle_claude_hook(flow)
+        assert flow.response.status_code == 400
+
+    def test_defaults_data_to_empty_dict(self):
+        n = CmuxNotifier()
+        flow = MagicMock()
+        flow.request.get_content.return_value = json.dumps(
+            {"event": "start"}
+        ).encode()
+        with patch.object(n, "_send_to_proxy") as mock_send:
+            n._handle_claude_hook(flow)
+        payload = mock_send.call_args[0][0]
+        msg = json.loads(payload.rstrip("\n"))
+        assert msg["params"] == {}
+        assert flow.response.status_code == 200
+
+    @patch("notifier.ctx")
+    def test_returns_200_on_exception(self, _mock_ctx):
+        """Should not break the agent on bad input."""
+        n = CmuxNotifier()
+        flow = MagicMock()
+        flow.request.get_content.side_effect = Exception("bad json")
+        n._handle_claude_hook(flow)
+        assert flow.response.status_code == 200
+
+    def test_claude_hook_endpoint_routing(self):
+        """Verify /_devbox/claude-hook routes to _handle_claude_hook."""
+        n = CmuxNotifier()
+        flow = MagicMock()
+        flow.request.path = "/_devbox/claude-hook"
+        flow.request.method = "POST"
+        flow.request.get_content.return_value = json.dumps(
+            {"event": "stop", "data": {}}
+        ).encode()
+        with patch.object(n, "_send_to_proxy"):
+            n.request(flow)
         assert flow.response.status_code == 200
 
 

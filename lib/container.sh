@@ -319,8 +319,11 @@ _require_single_project() {
 container_build() {
     ui_info "Building devbox images (this may take several minutes on first run)..."
 
-    # Ensure required compose variables are set for file parsing.
-    # These are only used at runtime (env_file, volumes), not during build.
+    # Ensure required compose variables are set for YAML parsing by docker compose.
+    # These placeholders satisfy docker-compose.yml interpolation during build only.
+    # At runtime, _export_compose_env() sets the real values — these are never used
+    # for actual container volumes or secrets. The :-fallbacks preserve real values
+    # when container_build is called after _export_compose_env (e.g. from container_start).
     export DEVBOX_SECRETS_FILE="${DEVBOX_SECRETS_FILE:-${DEVBOX_DATA}/secrets/.env}"
     export DEVBOX_PROJECT_SECRETS_FILE="${DEVBOX_PROJECT_SECRETS_FILE:-/dev/null}"
     export DEVBOX_CONFIG="${DEVBOX_CONFIG:-$HOME/.config/devbox}"
@@ -454,7 +457,7 @@ container_start() {
     # Wait for agent container to accept exec sessions.
     ui_spinner "Waiting for environment to be ready..." &
     local spinner_pid=$!
-    trap 'kill $spinner_pid 2>/dev/null; wait $spinner_pid 2>/dev/null' RETURN
+    trap '_stop_spinner $spinner_pid' RETURN
 
     local elapsed=0
     while ! docker compose $compose_args \

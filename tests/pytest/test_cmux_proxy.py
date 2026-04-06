@@ -2,14 +2,15 @@
 
 import importlib.util
 import json
-import sys
 from pathlib import Path
 
 # Add tooling directory to path so we can import the proxy module.
 # The file is cmux-proxy.py (hyphenated for CLI convention), so we use
 # importlib to handle the non-standard module name.
 TOOLING_DIR = Path(__file__).resolve().parent.parent.parent / "tooling"
-_spec = importlib.util.spec_from_file_location("cmux_proxy", TOOLING_DIR / "cmux-proxy.py")
+_spec = importlib.util.spec_from_file_location(
+    "cmux_proxy", TOOLING_DIR / "cmux-proxy.py"
+)
 assert _spec and _spec.loader
 _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
@@ -21,6 +22,8 @@ make_error_response = _mod.make_error_response
 _inject_workspace_text = _mod._inject_workspace_text
 _inject_workspace_json = _mod._inject_workspace_json
 _is_json = _mod._is_json
+_handle_claude_hook = _mod._handle_claude_hook
+ALLOWED_CLAUDE_HOOK_EVENTS = _mod.ALLOWED_CLAUDE_HOOK_EVENTS
 
 
 class TestTextCommandAllowed:
@@ -69,7 +72,9 @@ class TestTextCommandAllowed:
         assert not is_text_command_allowed("new_workspace --cwd /")
 
     def test_set_status_with_flags(self):
-        assert is_text_command_allowed("set_status branch main --icon=arrow.triangle.branch")
+        assert is_text_command_allowed(
+            "set_status branch main --icon=arrow.triangle.branch"
+        )
 
     def test_set_status_with_tab(self):
         assert is_text_command_allowed("set_status claude idle --tab=ABC-123")
@@ -123,6 +128,15 @@ class TestJsonMethodAllowed:
     def test_browser_eval_blocked(self):
         assert not is_json_method_allowed("browser.eval")
 
+    def test_claude_hook_stop_allowed(self):
+        assert is_json_method_allowed("claude-hook.stop")
+
+    def test_claude_hook_subagent_allowed(self):
+        assert is_json_method_allowed("claude-hook.subagent")
+
+    def test_claude_hook_arbitrary_event_allowed(self):
+        assert is_json_method_allowed("claude-hook.some-event")
+
     def test_empty_blocked(self):
         assert not is_json_method_allowed("")
 
@@ -156,6 +170,10 @@ class TestIsMethodAllowed:
         """browser.* is not in allowed prefixes."""
         assert not is_method_allowed("browser.navigate")
 
+    def test_claude_hook_passes(self):
+        """is_method_allowed delegates to is_json_method_allowed for claude-hook.*."""
+        assert is_method_allowed("claude-hook.stop")
+
 
 class TestIsJson:
     """Tests for JSON vs text detection."""
@@ -181,7 +199,9 @@ class TestInjectWorkspaceText:
         assert result == "set_status claude working --tab=ABC-123"
 
     def test_preserves_existing_tab(self):
-        result = _inject_workspace_text("set_status claude working --tab=EXISTING", "ABC-123")
+        result = _inject_workspace_text(
+            "set_status claude working --tab=EXISTING", "ABC-123"
+        )
         assert "--tab=EXISTING" in result
         assert "--tab=ABC-123" not in result
 
@@ -227,3 +247,73 @@ class TestMakeErrorResponse:
         resp = make_error_response(None, "blocked")
         parsed = json.loads(resp)
         assert parsed["id"] is None
+
+
+class TestClaudeHookEventAllowlist:
+    """Tests for the event-level security boundary in _handle_claude_hook.
+
+    The is_json_method_allowed check passes all claude-hook.* methods, but
+    _handle_claude_hook further restricts to ALLOWED_CLAUDE_HOOK_EVENTS.
+    This is the real security boundary for claude-hook events.
+    """
+
+    def test_stop_event_allowed(self):
+        assert "stop" in ALLOWED_CLAUDE_HOOK_EVENTS
+
+    def test_active_event_allowed(self):
+        assert "active" in ALLOWED_CLAUDE_HOOK_EVENTS
+
+    def test_idle_event_allowed(self):
+        assert "idle" in ALLOWED_CLAUDE_HOOK_EVENTS
+
+    def test_session_start_event_allowed(self):
+        assert "session-start" in ALLOWED_CLAUDE_HOOK_EVENTS
+
+    def test_session_end_event_allowed(self):
+        assert "session-end" in ALLOWED_CLAUDE_HOOK_EVENTS
+
+    def test_notification_event_allowed(self):
+        assert "notification" in ALLOWED_CLAUDE_HOOK_EVENTS
+
+    def test_prompt_submit_event_allowed(self):
+        assert "prompt-submit" in ALLOWED_CLAUDE_HOOK_EVENTS
+
+    def test_pre_tool_use_event_allowed(self):
+        assert "pre-tool-use" in ALLOWED_CLAUDE_HOOK_EVENTS
+
+    def test_arbitrary_event_blocked(self):
+        """Events not in the allowlist must be rejected."""
+        assert "some-event" not in ALLOWED_CLAUDE_HOOK_EVENTS
+
+    def test_exec_event_blocked(self):
+        assert "exec" not in ALLOWED_CLAUDE_HOOK_EVENTS
+
+    def test_empty_event_blocked(self):
+        assert "" not in ALLOWED_CLAUDE_HOOK_EVENTS
+
+    def test_handler_rejects_unknown_event(self):
+        """_handle_claude_hook sends an error response for unknown events."""
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        msg = {"id": "test-1", "method": "claude-hook.evil", "params": {}}
+        _handle_claude_hook("claude-hook.evil", msg, client)
+        client.sendall.assert_called_once()
+        resp = json.loads(client.sendall.call_args[0][0].decode().strip())
+        assert resp["ok"] is False
+        assert "unknown event" in resp["error"]
+
+    def test_handler_accepts_known_event(self):
+        """_handle_claude_hook calls subprocess for known events."""
+        from unittest.mock import MagicMock, patch
+
+        client = MagicMock()
+        msg = {"id": "test-2", "method": "claude-hook.stop", "params": {"data": 1}}
+        mock_result = MagicMock(returncode=0, stderr="")
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            _handle_claude_hook("claude-hook.stop", msg, client)
+        mock_run.assert_called_once()
+        args = mock_run.call_args
+        assert args[0][0][-1] == "stop"  # cmux claude-hook stop
+        resp = json.loads(client.sendall.call_args[0][0].decode().strip())
+        assert resp["ok"] is True

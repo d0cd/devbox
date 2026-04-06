@@ -135,17 +135,21 @@ Standard Docker Engine (24.0+) with Compose v2 works without modifications. No V
 
 ### Layer 1 — Filesystem Isolation (Docker Mounts)
 
-Only the project directory is mounted read-write. Everything else is read-only or ephemeral:
+The project directory and a small set of state directories are mounted read-write. Everything else is read-only or ephemeral:
 
 | Mount | Access | Purpose |
 |-------|--------|---------|
 | `/workspace` | `rw` | Project source code (bind-mount from host) |
 | `/devbox` | `ro` | Global config — OpenCode config, private overlay |
+| `/devbox/.private` | `ro` | Private config overlay |
 | `/run/proxy-ca` | `ro` | Shared proxy CA certificate (Docker volume) |
 | `/data/history` | `rw` | Persistent shell history |
+| `/home/devbox/.claude` | `rw` | Claude Code state (credentials, conversations) |
+| `/home/devbox/.opencode-mem/project` | `rw` | OpenCode project memory |
+| `/home/devbox/.opencode-mem/shared` | `rw` | Shared OpenCode memory (Docker volume) |
 | `/tmp` | `rw` (tmpfs) | Ephemeral temp, 256 MB limit |
 
-No access to `~/.ssh`, `~/.aws`, `~/.config`, or any other host directory. The container cannot read or modify host state beyond the project.
+No access to `~/.ssh`, `~/.aws`, `~/.config`, or any other host directory. The container cannot read or modify host state beyond the project and the state mounts listed above.
 
 ### Layer 2 — Network Enforcement (Dual-Layer)
 
@@ -500,6 +504,7 @@ devbox (entry point)
   ├── lib/container.sh   — Docker Compose lifecycle (build, start, shell, status)
   ├── lib/secrets.sh     — secrets management (set, show, edit, remove)
   ├── lib/allowlist.sh   — allowlist CRUD (add, remove, reset, show)
+  ├── lib/mount.sh       — per-project volume mount management
   ├── lib/profile.sh     — profile discovery, validation, menus
   ├── lib/firewall.sh    — iptables rules (sourced inside container, not on host)
   └── lib/ui.sh          — TUI helpers (info, warn, error, confirm, spinner)

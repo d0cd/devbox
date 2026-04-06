@@ -111,8 +111,8 @@ devbox logs --errors       # Show recent 4xx/5xx responses
 devbox logs --blocked      # Show requests blocked by enforcer
 devbox logs --slow         # Show requests slower than 5 seconds
 devbox logs --hosts        # Show request counts by host
-devbox logs --since 1h     # Show logs from the last hour
-devbox logs --until 2025-01-01  # Show logs before a date
+devbox logs --since 2025-01-01  # Show logs after a date
+devbox logs --until 2025-12-31  # Show logs before a date
 devbox resize 12G          # Resize to 12 GB RAM (restarts container)
 devbox resize 16G 8        # Resize to 16 GB RAM and 8 CPUs
 devbox clean               # Clean this project's data
@@ -265,6 +265,8 @@ DEVBOX_CPUS=6
 DEVBOX_BRIDGE_SUBNET=172.18.0.0/16
 DEVBOX_RELOAD_INTERVAL=15
 DEVBOX_PRIVATE_CONFIGS=git@github.com:you/devbox-private.git
+DEVBOX_NAME=my-project
+DEVBOX_CREDENTIAL_INJECTION=false
 ```
 
 Environment variables take precedence over `.devboxrc` values. Only whitelisted variables are accepted.

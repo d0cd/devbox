@@ -32,21 +32,35 @@ from typing import Optional
 # -- Command filtering ---------------------------------------------------------
 
 # Text-protocol commands that are safe (sidebar metadata only).
-ALLOWED_TEXT_COMMANDS = frozenset({
-    "set_status", "clear_status", "list_status",
-    "set_progress", "clear_progress",
-    "log", "clear_log", "list_log",
-    "sidebar_state",
-    "notify", "notify_target",
-})
+ALLOWED_TEXT_COMMANDS = frozenset(
+    {
+        "set_status",
+        "clear_status",
+        "list_status",
+        "set_progress",
+        "clear_progress",
+        "log",
+        "clear_log",
+        "list_log",
+        "sidebar_state",
+        "notify",
+        "notify_target",
+    }
+)
 
 # JSON-RPC methods that are safe.
-ALLOWED_JSON_METHODS = frozenset({
-    "notification.create", "notification.create_for_surface",
-    "notification.create_for_target",
-    "notification.list", "notification.clear",
-    "system.ping", "system.capabilities", "system.identify",
-})
+ALLOWED_JSON_METHODS = frozenset(
+    {
+        "notification.create",
+        "notification.create_for_surface",
+        "notification.create_for_target",
+        "notification.list",
+        "notification.clear",
+        "system.ping",
+        "system.capabilities",
+        "system.identify",
+    }
+)
 
 
 def is_text_command_allowed(line: str) -> bool:
@@ -69,16 +83,24 @@ def is_method_allowed(method: str) -> bool:
     """Check if a method/command name is allowed (either protocol)."""
     if not method:
         return False
-    return method in ALLOWED_TEXT_COMMANDS or method in ALLOWED_JSON_METHODS
+    return is_text_command_allowed(method) or is_json_method_allowed(method)
 
 
 CMUX_CLI = "/Applications/cmux.app/Contents/Resources/bin/cmux"
 
-ALLOWED_CLAUDE_HOOK_EVENTS = frozenset({
-    "session-start", "active", "stop", "idle",
-    "notification", "notify", "prompt-submit",
-    "pre-tool-use", "session-end",
-})
+ALLOWED_CLAUDE_HOOK_EVENTS = frozenset(
+    {
+        "session-start",
+        "active",
+        "stop",
+        "idle",
+        "notification",
+        "notify",
+        "prompt-submit",
+        "pre-tool-use",
+        "session-end",
+    }
+)
 
 
 def _handle_claude_hook(method: str, msg: dict, client: socket.socket) -> None:
@@ -91,7 +113,9 @@ def _handle_claude_hook(method: str, msg: dict, client: socket.socket) -> None:
 
     event = method.removeprefix("claude-hook.")
     if event not in ALLOWED_CLAUDE_HOOK_EVENTS:
-        resp = json.dumps({"id": msg.get("id"), "ok": False, "error": f"unknown event: {event}"})
+        resp = json.dumps(
+            {"id": msg.get("id"), "ok": False, "error": f"unknown event: {event}"}
+        )
         client.sendall((resp + "\n").encode())
         return
     data = msg.get("params", {})
@@ -104,7 +128,10 @@ def _handle_claude_hook(method: str, msg: dict, client: socket.socket) -> None:
             timeout=10,
         )
         if result.returncode != 0:
-            print(f"[cmux-proxy] claude-hook {event} failed (rc={result.returncode}): {result.stderr.strip()}", file=sys.stderr)
+            print(
+                f"[cmux-proxy] claude-hook {event} failed (rc={result.returncode}): {result.stderr.strip()}",
+                file=sys.stderr,
+            )
         resp = json.dumps({"id": msg.get("id"), "ok": result.returncode == 0})
         client.sendall((resp + "\n").encode())
     except Exception as e:
@@ -119,6 +146,7 @@ def make_error_response(req_id: Optional[str], message: str) -> str:
 
 
 # -- Connection handling -------------------------------------------------------
+
 
 class ProxyState:
     """Shared state for tracking connections and idle timeout."""
@@ -178,7 +206,6 @@ def handle_client(
     """Handle a single TCP client connection."""
     state.connect()
     try:
-
         buf = b""
         client.settimeout(30.0)
         while True:
@@ -273,9 +300,7 @@ def main() -> None:
         sys.exit(1)
 
     if not Path(cmux_socket_path).exists():
-        print(
-            f"[cmux-proxy] socket not found: {cmux_socket_path}", file=sys.stderr
-        )
+        print(f"[cmux-proxy] socket not found: {cmux_socket_path}", file=sys.stderr)
         sys.exit(1)
 
     workspace_id = os.environ.get("CMUX_WORKSPACE_ID", "")
@@ -321,8 +346,14 @@ def main() -> None:
             client, _ = server.accept()
             t = threading.Thread(
                 target=handle_client,
-                args=(client, cmux_socket_path, workspace_id, state,
-                      cmux_conn, cmux_lock),
+                args=(
+                    client,
+                    cmux_socket_path,
+                    workspace_id,
+                    state,
+                    cmux_conn,
+                    cmux_lock,
+                ),
                 daemon=True,
             )
             t.start()

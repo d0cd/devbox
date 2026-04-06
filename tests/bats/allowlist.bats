@@ -118,3 +118,90 @@ setup() {
 @test "validate_domain accepts single-label domain" {
     _validate_domain "localhost"
 }
+
+# --- Edge cases ---
+
+@test "validate_domain rejects domain with spaces" {
+    run _validate_domain "example .com"
+    [ "$status" -ne 0 ]
+}
+
+@test "validate_domain rejects domain with newline injection" {
+    run _validate_domain $'evil.com\ngood.com'
+    [ "$status" -ne 0 ]
+}
+
+@test "validate_domain rejects IP address" {
+    run _validate_domain "192.168.1.1"
+    [ "$status" -ne 0 ]
+}
+
+@test "validate_domain accepts hyphenated subdomain" {
+    _validate_domain "my-api.example.com"
+}
+
+@test "validate_domain rejects domain starting with hyphen" {
+    run _validate_domain "-evil.com"
+    [ "$status" -ne 0 ]
+}
+
+@test "validate_domain rejects domain ending with hyphen" {
+    run _validate_domain "evil-.com"
+    [ "$status" -ne 0 ]
+}
+
+@test "allowlist_add adds multiple domains at once" {
+    local policy
+    policy="$(create_test_policy "existing.com")"
+    run allowlist_add "$policy" "new1.com" "new2.com"
+    [ "$status" -eq 0 ]
+    grep -q "new1.com" "$policy"
+    grep -q "new2.com" "$policy"
+    rm -f "$policy"
+}
+
+@test "allowlist_add fails with no domains" {
+    local policy
+    policy="$(create_test_policy "existing.com")"
+    run allowlist_add "$policy" ""
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Usage:"* ]]
+    rm -f "$policy"
+}
+
+@test "allowlist_add fails when policy file missing" {
+    run allowlist_add "/nonexistent/policy.yml" "example.com"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"not found"* ]]
+}
+
+@test "allowlist_remove validates domain format before removing" {
+    local policy
+    policy="$(create_test_policy "existing.com")"
+    run allowlist_remove "$policy" "../etc/passwd"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Invalid domain"* ]]
+    rm -f "$policy"
+}
+
+@test "allowlist_remove fails when policy file missing" {
+    run allowlist_remove "/nonexistent/policy.yml" "example.com"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"not found"* ]]
+}
+
+@test "allowlist_show fails when policy file missing" {
+    run allowlist_show "/nonexistent/policy.yml"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"not found"* ]]
+}
+
+@test "allowlist_show displays domains from policy file" {
+    local policy
+    policy="$(create_test_policy "api.openai.com" "*.github.com")"
+    run allowlist_show "$policy"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"api.openai.com"* ]]
+    [[ "$output" == *"*.github.com"* ]]
+    rm -f "$policy"
+}

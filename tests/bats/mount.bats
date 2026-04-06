@@ -181,3 +181,62 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"No custom mounts"* ]]
 }
+
+# --- cmd_mount dispatcher ---
+# cmd_mount is in commands.sh and wraps the mount functions above.
+
+@test "cmd_mount add rejects missing arguments" {
+    source "${DEVBOX_ROOT}/lib/commands.sh"
+    run cmd_mount "add"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Usage:"* ]]
+}
+
+# cmd_mount add with :ro/:rw suffix requires a real project in ~/.devbox/.
+# Covered by functional testing (devbox mount add <name> /path /mnt:ro).
+
+@test "cmd_mount add rejects invalid suffix" {
+    source "${DEVBOX_ROOT}/lib/commands.sh"
+    run cmd_mount "add" "testproj" "$TEST_HOST_DIR" "/mnt/data:exec"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Invalid mount suffix"* ]]
+}
+
+@test "cmd_mount remove rejects missing arguments" {
+    source "${DEVBOX_ROOT}/lib/commands.sh"
+    run cmd_mount "remove" ""
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Usage:"* ]]
+}
+
+@test "cmd_mount list works without project name" {
+    source "${DEVBOX_ROOT}/lib/commands.sh"
+    run cmd_mount "list"
+    [ "$status" -eq 0 ]
+}
+
+@test "cmd_mount unknown subcommand fails" {
+    source "${DEVBOX_ROOT}/lib/commands.sh"
+    run cmd_mount "destroy"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Unknown mount command"* ]]
+}
+
+@test "cmd_mount help shows usage" {
+    source "${DEVBOX_ROOT}/lib/commands.sh"
+    run cmd_mount "help"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Usage: devbox mount"* ]]
+}
+
+@test "cmd_mount with no subcommand lists mounts" {
+    source "${DEVBOX_ROOT}/lib/commands.sh"
+    run cmd_mount ""
+    [ "$status" -eq 0 ]
+}
+
+# cmd_mount add tilde expansion requires a real project in ~/.devbox/.
+# Covered by functional testing.
+@test "placeholder_tilde_expansion" {
+    skip "requires real project setup"
+}

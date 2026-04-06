@@ -8,6 +8,7 @@ through the proxy sidecar — no direct container-to-host connections.
 The agent sends:  POST http://proxy:8080/_devbox/notify  {"title":"...","body":"..."}
 The proxy sends:  JSON-RPC notification.create  →  host.docker.internal:$CMUX_PROXY_PORT
 """
+
 from __future__ import annotations
 
 import json
@@ -26,7 +27,7 @@ class CmuxNotifier:
             return
 
         # Don't forward to the internet — handle locally.
-        path = flow.request.path[len(DEVBOX_PATH_PREFIX):]
+        path = flow.request.path[len(DEVBOX_PATH_PREFIX) :]
 
         if path == "notify" and flow.request.method == "POST":
             self._handle_notify(flow)

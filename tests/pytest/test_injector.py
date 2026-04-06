@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from conftest import MutableHeaders, make_injector_flow
+from conftest import make_injector_flow
 
 from injector import (
     Injector,
@@ -59,9 +59,7 @@ class TestLoadCredentials:
         assert value == "Bearer sk-or-test"
 
     def test_loads_github_key_with_bearer(self):
-        with patch.dict(
-            "os.environ", {"DEVBOX_INJECT_GITHUB": "ghp_test"}, clear=True
-        ):
+        with patch.dict("os.environ", {"DEVBOX_INJECT_GITHUB": "ghp_test"}, clear=True):
             result = _load_credentials()
         assert "api.github.com" in result
         header, value = result["api.github.com"]
@@ -82,16 +80,12 @@ class TestLoadCredentials:
         assert "api.github.com" in result
 
     def test_empty_value_skipped(self):
-        with patch.dict(
-            "os.environ", {"DEVBOX_INJECT_ANTHROPIC": ""}, clear=True
-        ):
+        with patch.dict("os.environ", {"DEVBOX_INJECT_ANTHROPIC": ""}, clear=True):
             result = _load_credentials()
         assert result == {}
 
     def test_unknown_env_var_ignored(self):
-        with patch.dict(
-            "os.environ", {"DEVBOX_INJECT_UNKNOWN": "value"}, clear=True
-        ):
+        with patch.dict("os.environ", {"DEVBOX_INJECT_UNKNOWN": "value"}, clear=True):
             result = _load_credentials()
         assert result == {}
 

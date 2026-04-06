@@ -53,8 +53,10 @@ _cmux_proxy_start() {
         fi
     fi
 
-    # Spawn proxy in background.
-    python3 "${DEVBOX_ROOT}/tooling/cmux-proxy.py" &
+    # Spawn proxy in background. Redirect output to log file so it doesn't
+    # trigger cmux activity highlights on the devbox terminal.
+    local proxy_log="${DEVBOX_DATA}/cmux-proxy.log"
+    python3 "${DEVBOX_ROOT}/tooling/cmux-proxy.py" >>"$proxy_log" 2>&1 &
     local proxy_pid=$!
     disown "$proxy_pid" 2>/dev/null || true
 

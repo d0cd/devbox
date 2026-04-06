@@ -193,6 +193,49 @@ class ProxyState:
             return (time.monotonic() - self.last_activity) > self.idle_timeout
 
 
+class CmuxConnection:
+    """Thread-safe cmux socket connection with automatic reconnect."""
+
+    def __init__(self, socket_path: str) -> None:
+        self._path = socket_path
+        self._sock: Optional[socket.socket] = None
+        self._lock = threading.Lock()
+
+    def connect(self) -> None:
+        """Open the cmux socket connection."""
+        self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self._sock.connect(self._path)
+        self._sock.settimeout(5.0)
+
+    def send_recv(self, payload: bytes) -> bytes:
+        """Send payload and read response. Reconnects once on failure."""
+        with self._lock:
+            for attempt in range(2):
+                try:
+                    if self._sock is None:
+                        self.connect()
+                    self._sock.sendall(payload)
+                    resp = b""
+                    while b"\n" not in resp:
+                        chunk = self._sock.recv(4096)
+                        if not chunk:
+                            raise ConnectionError("cmux socket closed")
+                        resp += chunk
+                    return resp
+                except (OSError, ConnectionError) as e:
+                    if attempt == 0:
+                        print(f"[cmux-proxy] cmux connection lost, reconnecting: {e}", file=sys.stderr)
+                        try:
+                            if self._sock:
+                                self._sock.close()
+                        except Exception:
+                            pass
+                        self._sock = None
+                    else:
+                        raise
+            return b""
+
+
 def _is_json(line: str) -> bool:
     """Check if a line looks like JSON (starts with '{')."""
     return line.lstrip().startswith("{")
@@ -219,8 +262,7 @@ def handle_client(
     cmux_socket_path: str,
     workspace_id: str,
     state: ProxyState,
-    cmux: socket.socket = None,
-    cmux_lock: threading.Lock = None,
+    cmux: CmuxConnection = None,
 ) -> None:
     """Handle a single TCP client connection."""
     state.connect()
@@ -257,15 +299,11 @@ def handle_client(
                             if workspace_id:
                                 msg = _inject_workspace_json(msg, workspace_id)
                             forwarded = json.dumps(msg).encode() + b"\n"
-                            with cmux_lock:
-                                cmux.sendall(forwarded)
-                                cmux_resp = b""
-                                while b"\n" not in cmux_resp:
-                                    chunk = cmux.recv(4096)
-                                    if not chunk:
-                                        break
-                                    cmux_resp += chunk
-                            client.sendall(cmux_resp)
+                            try:
+                                cmux_resp = cmux.send_recv(forwarded)
+                                client.sendall(cmux_resp)
+                            except (OSError, ConnectionError):
+                                client.sendall(make_error_response(req_id, "cmux unavailable").encode() + b"\n")
                     else:
                         print(f"[cmux-proxy] blocked JSON: {method}", file=sys.stderr)
                         resp = make_error_response(
@@ -277,15 +315,11 @@ def handle_client(
                     if is_text_command_allowed(line_str):
                         if workspace_id:
                             line_str = _inject_workspace_text(line_str, workspace_id)
-                        with cmux_lock:
-                            cmux.sendall((line_str + "\n").encode())
-                            cmux_resp = b""
-                            while b"\n" not in cmux_resp:
-                                chunk = cmux.recv(4096)
-                                if not chunk:
-                                    break
-                                cmux_resp += chunk
-                        client.sendall(cmux_resp)
+                        try:
+                            cmux_resp = cmux.send_recv((line_str + "\n").encode())
+                            client.sendall(cmux_resp)
+                        except (OSError, ConnectionError):
+                            client.sendall(b"ERR: cmux unavailable\n")
                     else:
                         command = line_str.split()[0] if line_str else "(empty)"
                         print(f"[cmux-proxy] blocked text: {command}", file=sys.stderr)
@@ -344,16 +378,13 @@ def main() -> None:
     signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
 
     # Open cmux connection NOW (while we're still in the cmux process tree).
-    # This connection will be reused for all client requests, avoiding the
-    # "Access denied" error that occurs when background threads try to connect.
-    cmux_conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    # CmuxConnection handles reconnection if the socket drops (sleep/wake).
+    cmux_conn = CmuxConnection(cmux_socket_path)
     try:
-        cmux_conn.connect(cmux_socket_path)
-        cmux_conn.settimeout(5.0)
+        cmux_conn.connect()
     except OSError as e:
         print(f"[cmux-proxy] failed to connect to cmux socket: {e}", file=sys.stderr)
         sys.exit(1)
-    cmux_lock = threading.Lock()
 
     print(f"[cmux-proxy] listening on 127.0.0.1:{port}", file=sys.stderr)
     print(f"[cmux-proxy] relaying to {cmux_socket_path}", file=sys.stderr)
@@ -371,7 +402,6 @@ def main() -> None:
                     workspace_id,
                     state,
                     cmux_conn,
-                    cmux_lock,
                 ),
                 daemon=True,
             )

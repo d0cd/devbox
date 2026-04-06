@@ -130,7 +130,6 @@ Credentials are managed via `devbox secrets`, never baked into images:
 
 ```bash
 # Global secrets (shared across all projects)
-devbox secrets set ANTHROPIC_AUTH_TOKEN <token>   # Claude Max/Pro (from `claude setup-token`)
 devbox secrets set GH_TOKEN ghp_...               # GitHub (auto-detected from `gh` if installed)
 devbox secrets show
 
@@ -148,7 +147,7 @@ devbox auto-detects host credentials where possible:
 
 | Credential | How | Manual step? |
 |---|---|---|
-| Claude Code (Max/Pro) | Run `/login` inside container on first use | One-time per project (persisted) |
+| Claude Code (Max/Pro) | Run `/login` inside container on first use | One-time (persisted globally) |
 | GitHub (`GH_TOKEN`) | Auto-extracted from host `gh auth` at startup | None if `gh` is installed |
 | Git identity | From `devbox secrets set GIT_AUTHOR_NAME/EMAIL` | One-time setup |
 | Other AI keys | From `devbox secrets set` | One-time setup |
@@ -242,7 +241,8 @@ Docker-managed volumes (not on host filesystem):
 
 | Volume | Container path | Purpose |
 |--------|---------------|---------|
-| `proxy-ca` | `/run/proxy-ca` (agent, ro) and `/ca` (proxy, rw) | Shared mitmproxy CA certificate |
+| `proxy-ca-keypair` | `/ca` (proxy only, rw) | CA private key + cert (persists across restarts) |
+| `proxy-ca-cert` | `/run/proxy-ca` (agent, ro) and `/ca-cert` (proxy, rw) | Public CA certificate only |
 | `devbox-shared-memory` | `~/.opencode-mem/shared` | Cross-project OpenCode memory |
 
 ## API Observability
@@ -306,8 +306,9 @@ See [docs/DESIGN.md](docs/DESIGN.md) for the full architecture and honest threat
                 │ HTTP_PROXY
 ┌───────────────▼─────────────────────────┐
 │  Proxy Sidecar                          │
-│  mitmproxy enforcer → allowlist check   │
-│  logger → SQLite → devbox logs           │
+│  mitmproxy addon chain:                 │
+│    enforcer → injector → notifier →     │
+│    logger → SQLite → devbox logs        │
 └─────────────────────────────────────────┘
 ```
 

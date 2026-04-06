@@ -14,8 +14,8 @@ This proxy accepts both and filters by command/method name. It injects
 the workspace ID (--tab= for text, workspace_id for JSON) so the
 container doesn't need to know it.
 
-Started automatically by devbox when cmux is detected. Exits after 60s
-of idle (no active connections).
+Started automatically by devbox when cmux is detected. Exits after
+idle timeout (default: 3600s / 1 hour, configurable via DEVBOX_CMUX_PROXY_IDLE).
 """
 
 import atexit
@@ -37,11 +37,14 @@ ALLOWED_TEXT_COMMANDS = frozenset({
     "set_progress", "clear_progress",
     "log", "clear_log", "list_log",
     "sidebar_state",
+    "notify", "notify_target",
 })
 
 # JSON-RPC methods that are safe.
 ALLOWED_JSON_METHODS = frozenset({
-    "notification.create", "notification.list", "notification.clear",
+    "notification.create", "notification.create_for_surface",
+    "notification.create_for_target",
+    "notification.list", "notification.clear",
     "system.ping", "system.capabilities", "system.identify",
 })
 
@@ -54,7 +57,12 @@ def is_text_command_allowed(line: str) -> bool:
 
 def is_json_method_allowed(method: str) -> bool:
     """Check if a JSON-RPC method is in the allowlist."""
-    return method in ALLOWED_JSON_METHODS
+    if method in ALLOWED_JSON_METHODS:
+        return True
+    # Allow claude-hook.* methods (forwarded from container hooks).
+    if method.startswith("claude-hook."):
+        return True
+    return False
 
 
 def is_method_allowed(method: str) -> bool:
@@ -62,6 +70,45 @@ def is_method_allowed(method: str) -> bool:
     if not method:
         return False
     return method in ALLOWED_TEXT_COMMANDS or method in ALLOWED_JSON_METHODS
+
+
+CMUX_CLI = "/Applications/cmux.app/Contents/Resources/bin/cmux"
+
+ALLOWED_CLAUDE_HOOK_EVENTS = frozenset({
+    "session-start", "active", "stop", "idle",
+    "notification", "notify", "prompt-submit",
+    "pre-tool-use", "session-end",
+})
+
+
+def _handle_claude_hook(method: str, msg: dict, client: socket.socket) -> None:
+    """Forward claude-hook.* methods to the cmux CLI on the host.
+
+    The cmux CLI reads hook JSON from stdin and handles all the rich
+    status/notification/sidebar logic internally.
+    """
+    import subprocess
+
+    event = method.removeprefix("claude-hook.")
+    if event not in ALLOWED_CLAUDE_HOOK_EVENTS:
+        resp = json.dumps({"id": msg.get("id"), "ok": False, "error": f"unknown event: {event}"})
+        client.sendall((resp + "\n").encode())
+        return
+    data = msg.get("params", {})
+    try:
+        result = subprocess.run(
+            [CMUX_CLI, "claude-hook", event],
+            input=json.dumps(data),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        resp = json.dumps({"id": msg.get("id"), "ok": result.returncode == 0})
+        client.sendall((resp + "\n").encode())
+    except Exception as e:
+        print(f"[cmux-proxy] claude-hook failed: {e}", file=sys.stderr)
+        resp = json.dumps({"id": msg.get("id"), "ok": False, "error": str(e)})
+        client.sendall((resp + "\n").encode())
 
 
 def make_error_response(req_id: Optional[str], message: str) -> str:
@@ -123,14 +170,12 @@ def handle_client(
     cmux_socket_path: str,
     workspace_id: str,
     state: ProxyState,
+    cmux: socket.socket = None,
+    cmux_lock: threading.Lock = None,
 ) -> None:
     """Handle a single TCP client connection."""
     state.connect()
-    cmux: Optional[socket.socket] = None
     try:
-        cmux = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        cmux.connect(cmux_socket_path)
-        cmux.settimeout(5.0)
 
         buf = b""
         client.settimeout(30.0)
@@ -157,17 +202,22 @@ def handle_client(
                         continue
 
                     if is_json_method_allowed(method):
-                        if workspace_id:
-                            msg = _inject_workspace_json(msg, workspace_id)
-                        forwarded = json.dumps(msg).encode() + b"\n"
-                        cmux.sendall(forwarded)
-                        cmux_resp = b""
-                        while b"\n" not in cmux_resp:
-                            chunk = cmux.recv(4096)
-                            if not chunk:
-                                break
-                            cmux_resp += chunk
-                        client.sendall(cmux_resp)
+                        if method.startswith("claude-hook."):
+                            # Forward to cmux CLI on the host.
+                            _handle_claude_hook(method, msg, client)
+                        else:
+                            if workspace_id:
+                                msg = _inject_workspace_json(msg, workspace_id)
+                            forwarded = json.dumps(msg).encode() + b"\n"
+                            with cmux_lock:
+                                cmux.sendall(forwarded)
+                                cmux_resp = b""
+                                while b"\n" not in cmux_resp:
+                                    chunk = cmux.recv(4096)
+                                    if not chunk:
+                                        break
+                                    cmux_resp += chunk
+                            client.sendall(cmux_resp)
                     else:
                         print(f"[cmux-proxy] blocked JSON: {method}", file=sys.stderr)
                         resp = make_error_response(
@@ -179,13 +229,14 @@ def handle_client(
                     if is_text_command_allowed(line_str):
                         if workspace_id:
                             line_str = _inject_workspace_text(line_str, workspace_id)
-                        cmux.sendall((line_str + "\n").encode())
-                        cmux_resp = b""
-                        while b"\n" not in cmux_resp:
-                            chunk = cmux.recv(4096)
-                            if not chunk:
-                                break
-                            cmux_resp += chunk
+                        with cmux_lock:
+                            cmux.sendall((line_str + "\n").encode())
+                            cmux_resp = b""
+                            while b"\n" not in cmux_resp:
+                                chunk = cmux.recv(4096)
+                                if not chunk:
+                                    break
+                                cmux_resp += chunk
                         client.sendall(cmux_resp)
                     else:
                         command = line_str.split()[0] if line_str else "(empty)"
@@ -193,15 +244,10 @@ def handle_client(
                         client.sendall(b"ERR: command blocked by devbox proxy\n")
 
                 state.last_activity = time.monotonic()
-    except (OSError, ConnectionError):
-        pass
+    except (OSError, ConnectionError) as exc:
+        print(f"[cmux-proxy] client disconnected: {exc}", file=sys.stderr)
     finally:
         client.close()
-        if cmux is not None:
-            try:
-                cmux.close()
-            except Exception:
-                pass
         state.disconnect()
 
 
@@ -231,7 +277,7 @@ def main() -> None:
         sys.exit(1)
 
     workspace_id = os.environ.get("CMUX_WORKSPACE_ID", "")
-    idle_timeout = int(os.environ.get("DEVBOX_CMUX_PROXY_IDLE", "60"))
+    idle_timeout = int(os.environ.get("DEVBOX_CMUX_PROXY_IDLE", "3600"))
     state = ProxyState(idle_timeout=idle_timeout)
 
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -250,6 +296,18 @@ def main() -> None:
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
 
+    # Open cmux connection NOW (while we're still in the cmux process tree).
+    # This connection will be reused for all client requests, avoiding the
+    # "Access denied" error that occurs when background threads try to connect.
+    cmux_conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        cmux_conn.connect(cmux_socket_path)
+        cmux_conn.settimeout(5.0)
+    except OSError as e:
+        print(f"[cmux-proxy] failed to connect to cmux socket: {e}", file=sys.stderr)
+        sys.exit(1)
+    cmux_lock = threading.Lock()
+
     print(f"[cmux-proxy] listening on 127.0.0.1:{port}", file=sys.stderr)
     print(f"[cmux-proxy] relaying to {cmux_socket_path}", file=sys.stderr)
     if workspace_id:
@@ -260,7 +318,8 @@ def main() -> None:
             client, _ = server.accept()
             t = threading.Thread(
                 target=handle_client,
-                args=(client, cmux_socket_path, workspace_id, state),
+                args=(client, cmux_socket_path, workspace_id, state,
+                      cmux_conn, cmux_lock),
                 daemon=True,
             )
             t.start()

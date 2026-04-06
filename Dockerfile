@@ -33,15 +33,17 @@ COPY --from=ghcr.io/astral-sh/uv:0.10.10 /uv /usr/local/bin/uv
 # Override with: docker build --build-arg CLAUDE_CODE_VERSION=2.2.0 ...
 # Or: devbox rebuild (picks up latest Dockerfile defaults from devbox update).
 ARG OPENCODE_VERSION=1.2.26
-ARG CLAUDE_CODE_VERSION=2.1.76
+ARG CLAUDE_CODE_VERSION=2.1.89
 ARG GEMINI_CLI_VERSION=0.33.1
 ARG CODEX_VERSION=0.114.0
 ARG GSD_OPENCODE_VERSION=1.22.1
+ARG RALPHX_VERSION=0.1.0
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
     npm install -g --omit=dev opencode-ai@${OPENCODE_VERSION} \
     @google/gemini-cli@${GEMINI_CLI_VERSION} @openai/codex@${CODEX_VERSION} \
     @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
-    gsd-opencode@${GSD_OPENCODE_VERSION}
+    gsd-opencode@${GSD_OPENCODE_VERSION} \
+    ralphx@${RALPHX_VERSION}
 
 # GitHub CLI.
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -120,6 +122,9 @@ RUN chown -R devbox:devbox /opt/oh-my-zsh
 # npm global packages (includes OpenCode, Gemini CLI, Codex, Claude Code, etc.).
 COPY --from=builder /usr/lib/node_modules /usr/lib/node_modules
 COPY --from=builder /usr/bin/opencode /usr/bin/gemini /usr/bin/codex /usr/bin/claude /usr/bin/gsd-opencode /usr/bin/
+# ralphx uses relative imports — needs a wrapper that runs from its package dir.
+RUN printf '#!/bin/sh\nexec node /usr/lib/node_modules/ralphx/dist/cli/index.js "$@"\n' > /usr/bin/ralphx \
+    && chmod +x /usr/bin/ralphx
 
 # GitHub CLI keyring + binary.
 COPY --from=builder /usr/share/keyrings/githubcli-archive-keyring.gpg /usr/share/keyrings/githubcli-archive-keyring.gpg
@@ -133,13 +138,14 @@ COPY --from=builder /usr/local/bin/uv /usr/local/bin/uv
 COPY templates/zshrc /etc/skel/.zshrc
 COPY templates/tmux.conf /etc/skel/.tmux.conf
 
-# --- Library scripts and profiles ---
+# --- Library scripts, profiles, and templates ---
 COPY lib/firewall.sh /usr/local/lib/devbox/firewall.sh
 COPY tooling/profiles/ /usr/local/lib/devbox/profiles/
+COPY templates/ralphx-audit/ /usr/local/share/devbox/templates/ralphx-audit/
 
 # --- cmux helpers (notifications via OSC 777, status via proxy) ---
-COPY tooling/devbox-notify tooling/devbox-cmux-send tooling/devbox-status /usr/local/bin/
-RUN chmod +x /usr/local/bin/devbox-notify /usr/local/bin/devbox-cmux-send /usr/local/bin/devbox-status
+COPY tooling/devbox-notify tooling/devbox-cmux-send tooling/devbox-status tooling/devbox-claude-hook /usr/local/bin/
+RUN chmod +x /usr/local/bin/devbox-notify /usr/local/bin/devbox-cmux-send /usr/local/bin/devbox-status /usr/local/bin/devbox-claude-hook
 
 # --- Default Claude Code hooks (cmux notifications on Stop, Permission, etc.) ---
 COPY templates/claude-hooks.json /etc/skel/.claude/settings.json

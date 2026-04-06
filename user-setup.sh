@@ -53,14 +53,9 @@ _overlay_private() {
     fi
 }
 
-# ~/.claude/ is a persistent bind mount (survives restarts).
-# Overlay private configs on top — fresh configs each start, persistent state preserved.
+# ~/.claude/ is devbox-global persistent storage (separate from host's ~/.claude/).
+# Overlay private configs (settings, hooks, skills) on top each start.
 _overlay_private /devbox/.private/claude "${DEVBOX_HOME}/.claude"
-
-# Copy host's claude.json (global state, account metadata) if available.
-if [ -f /devbox/.private/claude.json ]; then
-    cp /devbox/.private/claude.json "${DEVBOX_HOME}/.claude.json"
-fi
 _overlay_private /devbox/.private/opencode "${DEVBOX_HOME}/.config/opencode"
 _overlay_private /devbox/.private/nvim "${DEVBOX_HOME}/.config/nvim"
 _overlay_private /devbox/.private/tmux "${DEVBOX_HOME}/.config/tmux"

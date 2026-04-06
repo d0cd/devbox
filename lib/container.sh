@@ -19,19 +19,13 @@ _cmux_available() {
 # Set a sidebar status pill for the devbox session.
 _cmux_set_status() {
     _cmux_available || return 0
-    cmux set-status devbox "$1" 2>/dev/null || true
+    cmux set-status devbox "$1" --icon=bolt.fill --color='#4C8DFF' 2>/dev/null || true
 }
 
 # Clear the devbox sidebar status pill.
 _cmux_clear_status() {
     _cmux_available || return 0
     cmux clear-status devbox 2>/dev/null || true
-}
-
-# Send a cmux notification from the host side.
-_cmux_notify() {
-    _cmux_available || return 0
-    cmux notify --title "${1:-devbox}" --body "${2:-}" 2>/dev/null || true
 }
 
 # ---------------------------------------------------------------------------
@@ -64,9 +58,9 @@ _cmux_proxy_start() {
     local proxy_pid=$!
     disown "$proxy_pid" 2>/dev/null || true
 
-    # Wait for port file (up to 3s).
+    # Wait for port file (up to 3s, polling every 0.5s).
     local elapsed=0
-    while [ ! -f "$_CMUX_PROXY_PORT_FILE" ] && [ "$elapsed" -lt 3 ]; do
+    while [ ! -f "$_CMUX_PROXY_PORT_FILE" ] && [ "$elapsed" -lt 6 ]; do
         sleep 0.5
         elapsed=$((elapsed + 1))
     done
@@ -217,7 +211,9 @@ _export_compose_env() {
         mkdir -p "${DEVBOX_CONFIG}/.private-empty"
         export DEVBOX_PRIVATE_DIR="${DEVBOX_CONFIG}/.private-empty"
     fi
-    export DEVBOX_CLAUDE_DIR="${DEVBOX_DATA}/claude-data"
+    # Claude Code state — global across all devbox projects. Credentials, plans,
+    # conversations, plugins all persist here. Separate from the host's ~/.claude/.
+    export DEVBOX_CLAUDE_DIR="${DEVBOX_DATA}/claude"
     export DEVBOX_PROJECT_NAME="$(_project_name_for_hash "$hash")"
     export DEVBOX_MEMORY="${DEVBOX_MEMORY:-8G}"
     export DEVBOX_CPUS="${DEVBOX_CPUS:-4.0}"
@@ -444,7 +440,9 @@ container_start() {
             private_dir="$(cd "${DEVBOX_CONFIG}/.private" && pwd -P)"
             local build_context
             build_context="$(dirname "$private_dir")"
-            docker build -q -f "$private_dockerfile" -t devbox-agent:latest "$build_context" >/dev/null 2>&1 || true
+            if ! docker build -q -f "$private_dockerfile" -t devbox-agent:latest "$build_context" >/dev/null 2>&1; then
+                ui_warn "Private overlay build failed — continuing with base image."
+            fi
         fi
     fi
 
@@ -514,16 +512,6 @@ container_shell() {
     _cmux_set_status "running"
     docker compose $(_compose_file_args) -p "$project" exec agent gosu devbox zsh
     _cmux_clear_status
-}
-
-# Stop the container stack.
-container_stop() {
-    local target_name="${1:-}"
-    local project
-    project="$(_require_single_project "$target_name")"
-    _export_compose_env "$project"
-    docker compose $(_compose_file_args) -p "$project" down
-    _cmux_proxy_stop
 }
 
 # Show the status of running devbox containers with project details.

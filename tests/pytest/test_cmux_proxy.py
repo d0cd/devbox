@@ -87,6 +87,12 @@ class TestJsonMethodAllowed:
     def test_notification_clear_allowed(self):
         assert is_json_method_allowed("notification.clear")
 
+    def test_notification_create_for_surface_allowed(self):
+        assert is_json_method_allowed("notification.create_for_surface")
+
+    def test_notification_create_for_target_allowed(self):
+        assert is_json_method_allowed("notification.create_for_target")
+
     def test_system_ping_allowed(self):
         assert is_json_method_allowed("system.ping")
 

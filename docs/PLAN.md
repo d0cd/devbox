@@ -31,7 +31,7 @@
 ### 1.4 CLI — Minimum Viable
 
 - [x] `devbox` / `devbox <path>` — start environment and drop into shell
-- [x] `devbox shell` — exec into running container
+- [x] `devbox resume` — exec into running container
 - [x] `devbox stop` — stop container stack
 - [x] `devbox info` — show container status and project path
 - [x] `main.sh` — installer/symlinker
@@ -64,7 +64,7 @@
 
 ## Phase 4: Agent Layer
 
-- [x] `config/opencode.json` — provider config, PAL MCP, rules
+- [x] `config/opencode/opencode.json` — provider config, PAL MCP, rules
 - [x] PAL MCP + clink subagent role prompts (codereview, security-audit, planner)
 - [x] `templates/AGENTS.md` — dispatch guidelines
 - [x] ~~Live verification of OpenRouter/Anthropic failover~~ (N/A — requires user API keys; verified manually)
@@ -111,7 +111,7 @@
 - [x] Completions — remove attach from bash/zsh completions
 - [x] Docs — update DESIGN.md, PLAN.md, README.md
 
-**Exit criteria:** `devbox` starts environment. `devbox shell` (multiple panes) works. `claude`, `opencode`, `nvim` all run inside the container with full network isolation.
+**Exit criteria:** `devbox` starts environment. `devbox resume` (multiple panes) works. `claude`, `opencode`, `nvim` all run inside the container with full network isolation.
 
 ---
 

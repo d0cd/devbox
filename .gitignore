@@ -31,6 +31,9 @@ memory/
 # Private config overlay (cloned at runtime).
 .private/
 
+# ralphx run results (templates are tracked in templates/ralphx-audit/).
+.ralphx/
+
 # Claude Code — keep .claude/CLAUDE.md, ignore everything else.
 .claude/*
 !.claude/CLAUDE.md

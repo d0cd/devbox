@@ -144,6 +144,7 @@ class TestEnforcerClass:
         enforcer = self._make_enforcer(tmp_path)
         flow = MagicMock()
         flow.request.pretty_host = "evil.com"
+        flow.request.path = "/v1/messages"
         flow.response = None
         with patch("enforcer.ctx"):
             enforcer.request(flow)
@@ -156,6 +157,7 @@ class TestEnforcerClass:
         enforcer = self._make_enforcer(tmp_path)
         flow = MagicMock()
         flow.request.pretty_host = "api.anthropic.com"
+        flow.request.path = "/v1/messages"
         flow.response = None  # Not set by default.
         with patch("enforcer.ctx"):
             enforcer.request(flow)
@@ -186,6 +188,7 @@ class TestEnforcerClass:
         enforcer = self._make_enforcer(tmp_path, domains=[])
         flow = MagicMock()
         flow.request.pretty_host = "anything.com"
+        flow.request.path = "/v1/messages"
         flow.response = None
         with patch("enforcer.ctx"):
             enforcer.request(flow)
@@ -209,6 +212,18 @@ class TestEnforcerClass:
             # Should not raise — just log error and keep existing allowlist.
             enforcer._maybe_reload()
         assert "good.com" in enforcer.allowlist
+
+    def test_request_skips_devbox_internal_endpoints(self, tmp_path):
+        """/_devbox/ paths must bypass the enforcer for cmux integration."""
+        enforcer = self._make_enforcer(tmp_path, domains=[])
+        flow = MagicMock()
+        flow.request.path = "/_devbox/notify"
+        flow.request.pretty_host = "proxy"
+        flow.response = None
+        with patch("enforcer.ctx"):
+            enforcer.request(flow)
+        # Should NOT be blocked — notifier addon handles these.
+        assert flow.response is None
 
     def test_maybe_reload_detects_file_change(self, tmp_path):
         policy = tmp_path / "policy.yml"

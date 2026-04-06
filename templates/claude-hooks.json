@@ -9,7 +9,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "devbox-status set claude idle; devbox-notify 'Claude Code' 'Task complete'",
+            "command": "devbox-status idle; devbox-status notify 'Claude Code' 'Task complete'",
             "timeout": 5
           }
         ]
@@ -21,7 +21,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "devbox-status set claude 'needs input'; devbox-notify 'Claude Code' 'Permission needed'",
+            "command": "devbox-status attention; devbox-status notify 'Claude Code' 'Permission needed'",
             "timeout": 5
           }
         ]
@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "devbox-status set claude 'needs input'; devbox-notify 'Claude Code' 'Waiting for input'",
+            "command": "devbox-status attention; devbox-status notify 'Claude Code' 'Waiting for input'",
             "timeout": 5
           }
         ]
@@ -43,7 +43,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "devbox-status set claude working",
+            "command": "devbox-status working",
             "timeout": 3
           }
         ]

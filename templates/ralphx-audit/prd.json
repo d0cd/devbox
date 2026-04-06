@@ -1,0 +1,104 @@
+{
+  "version": "1.0",
+  "projectName": "my-project-audit",
+  "stories": [
+    {
+      "id": "docs",
+      "title": "Documentation accuracy",
+      "description": "Verify that documentation matches the current implementation.",
+      "acceptanceCriteria": [
+        "Confirm README describes the actual CLI interface and usage",
+        "Confirm any architecture docs match the current source tree",
+        "Confirm no references to deleted or renamed files",
+        "Confirm help text is sufficient for a new user to get started"
+      ],
+      "priority": 1,
+      "status": "active",
+      "passes": false
+    },
+    {
+      "id": "testing",
+      "title": "Test health",
+      "description": "Verify the test suite is healthy and covers critical paths.",
+      "acceptanceCriteria": [
+        "Confirm all tests pass",
+        "Confirm coverage thresholds are met (if configured)",
+        "Confirm no skipped or pending tests",
+        "Confirm tests import only functions that actually exist in source modules"
+      ],
+      "priority": 2,
+      "status": "active",
+      "passes": false
+    },
+    {
+      "id": "correctness",
+      "title": "Logic and error handling",
+      "description": "Verify that core logic is correct and error paths behave reasonably.",
+      "acceptanceCriteria": [
+        "Confirm catch blocks either rethrow, log, or return a documented fallback",
+        "Confirm no silently swallowed errors",
+        "Confirm edge cases (empty input, missing files, invalid config) don't crash"
+      ],
+      "priority": 3,
+      "status": "active",
+      "passes": false
+    },
+    {
+      "id": "ux",
+      "title": "CLI/API usability",
+      "description": "Verify the interface is usable by humans and agents.",
+      "acceptanceCriteria": [
+        "Confirm error messages include the next action the user should take",
+        "Confirm help text explains all commands and options",
+        "Confirm exit codes are meaningful and documented"
+      ],
+      "priority": 4,
+      "status": "active",
+      "passes": false
+    },
+    {
+      "id": "production",
+      "title": "Publish/deploy readiness",
+      "description": "Verify the project is ready to ship.",
+      "acceptanceCriteria": [
+        "Confirm build succeeds with no errors or warnings",
+        "Confirm type check passes",
+        "Confirm package metadata is complete (name, version, license, etc.)",
+        "Confirm no dev artifacts or secrets are included in the published package"
+      ],
+      "priority": 5,
+      "status": "active",
+      "passes": false
+    },
+    {
+      "id": "coherence",
+      "title": "Architectural coherence",
+      "description": "Verify the codebase is internally consistent.",
+      "acceptanceCriteria": [
+        "Confirm abstractions are used consistently (no mixed patterns for the same concern)",
+        "Confirm no dead code (unused exports, unreachable branches)",
+        "Confirm no TODO/FIXME/HACK comments that indicate unfinished work"
+      ],
+      "priority": 6,
+      "status": "active",
+      "passes": false
+    },
+    {
+      "id": "security",
+      "title": "Security boundaries",
+      "description": "Verify existing security boundaries are correct. Do not add new security mechanisms.",
+      "acceptanceCriteria": [
+        "Confirm user input is validated at system boundaries",
+        "Confirm file operations don't allow path traversal outside the project",
+        "Confirm no secrets or credentials are logged or stored in plain text"
+      ],
+      "priority": 7,
+      "status": "active",
+      "passes": false
+    }
+  ],
+  "qualityGates": {
+    "typecheck": "npx tsc --noEmit",
+    "test": "npm test"
+  }
+}

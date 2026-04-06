@@ -89,8 +89,10 @@ firewall_init() {
                 || echo "[firewall] WARN: IPv6 conntrack rule failed (non-fatal)"
             ip6tables -F INPUT && ip6tables -P INPUT DROP \
                 || echo "[firewall] WARN: IPv6 INPUT chain setup failed (non-fatal)"
-            ip6tables -A INPUT -i lo -j ACCEPT 2>/dev/null || true
-            ip6tables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+            ip6tables -A INPUT -i lo -j ACCEPT \
+                || echo "[firewall] WARN: IPv6 INPUT loopback rule failed (non-fatal)"
+            ip6tables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT \
+                || echo "[firewall] WARN: IPv6 INPUT conntrack rule failed (non-fatal)"
             ip6tables -F FORWARD && ip6tables -P FORWARD DROP \
                 || echo "[firewall] WARN: IPv6 FORWARD chain setup failed (non-fatal)"
             echo "[firewall] IPv6 rules applied (all chains locked down)."

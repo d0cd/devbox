@@ -12,16 +12,17 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Create non-root user for running the proxy.
 RUN groupadd -g 1000 devbox && useradd -u 1000 -g devbox -d /home/devbox -s /bin/bash devbox
 
-COPY enforcer.py injector.py logger.py /proxy/
+COPY enforcer.py injector.py notifier.py logger.py /proxy/
 
 # /data is where the SQLite API log is written.
-# /ca is the shared volume for CA certs.
-# /home/devbox/.mitmproxy stores the generated CA keypair.
+# /ca is the proxy-only volume for CA keypair persistence across restarts.
+# /ca-cert is the shared volume for the public CA cert (agent reads this).
+# /home/devbox/.mitmproxy stores the active CA keypair for mitmproxy.
 # Seed volume dirs with a file so Docker copies ownership into named volumes.
 # (Docker only initializes volume ownership when there are files to copy.)
-RUN mkdir -p /data /ca /home/devbox/.mitmproxy \
-    && touch /ca/.keep /data/.keep \
-    && chown -R devbox:devbox /data /ca /home/devbox/.mitmproxy /proxy
+RUN mkdir -p /data /ca /ca-cert /home/devbox/.mitmproxy \
+    && touch /ca/.keep /ca-cert/.keep /data/.keep \
+    && chown -R devbox:devbox /data /ca /ca-cert /home/devbox/.mitmproxy /proxy
 
 EXPOSE 8080
 

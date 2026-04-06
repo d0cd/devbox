@@ -78,11 +78,11 @@ cmd_secrets() {
             # Use flock where available to prevent concurrent modifications.
             if grep -q "^${key}=" "$secrets_file" 2>/dev/null; then
                 local tmpfile
-                tmpfile="$(mktemp)" || { ui_error "Cannot create temp file"; return 1; }
+                tmpfile="$(mktemp)" || { ui_error "Cannot create temp file. Check disk space: df -h /tmp"; return 1; }
                 trap 'rm -f "$tmpfile"' RETURN
                 (
                     if command -v flock &>/dev/null; then
-                        flock -w 5 9 || { ui_error "Failed to acquire secrets file lock."; exit 1; }
+                        flock -w 5 9 || { ui_error "Failed to acquire secrets file lock. Another devbox process may be writing. Try again."; exit 1; }
                     fi
                     # Replace matching line. Avoids -F= which breaks values containing '='.
                     awk -v k="$key" -v v="$value" '{
@@ -119,11 +119,11 @@ cmd_secrets() {
                 return 0
             fi
             local tmpfile
-            tmpfile="$(mktemp)" || { ui_error "Cannot create temp file"; return 1; }
+            tmpfile="$(mktemp)" || { ui_error "Cannot create temp file. Check disk space: df -h /tmp"; return 1; }
             trap 'rm -f "$tmpfile"' RETURN
             (
                 if command -v flock &>/dev/null; then
-                    flock -w 5 9 || { ui_error "Failed to acquire secrets file lock."; exit 1; }
+                    flock -w 5 9 || { ui_error "Failed to acquire secrets file lock. Another devbox process may be writing. Try again."; exit 1; }
                 fi
                 grep -v "^${key}=" "$secrets_file" >"$tmpfile"
                 (umask 077 && mv "$tmpfile" "$secrets_file")

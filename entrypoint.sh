@@ -6,7 +6,7 @@
 #   Phase 2 (devbox): user-setup.sh — git identity, config overlay, hold open.
 #
 # Capabilities: cap_drop ALL + cap_add NET_ADMIN, SETUID, SETGID, SETPCAP.
-# SETUID/SETGID for gosu privilege drop. SETPCAP for setpriv bounding set drop.
+# NET_ADMIN for iptables. SETUID/SETGID for gosu. SETPCAP for bounding set drop.
 set -euo pipefail
 
 # =========================================================================
@@ -97,10 +97,8 @@ export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 # Phase 2: Drop to unprivileged user — config overlay and hold container open
 # =========================================================================
 
-# Irrevocably drop NET_ADMIN from the bounding set before switching to
-# the unprivileged user. Once dropped, no child process can ever regain
-# it — the kernel enforces this. This makes the iptables rules immutable
-# from inside the container's main process tree.
-# setpriv ships with util-linux (always present in Ubuntu 24.04).
-exec setpriv --no-new-privs --bounding-set -net_admin --inh-caps -net_admin \
+# Irrevocably drop NET_ADMIN from the bounding set, then drop to unprivileged user.
+# After this, no process in the container — not even root — can regain NET_ADMIN.
+# The iptables rules become immutable for the lifetime of the container.
+exec setpriv --no-new-privs --bounding-set -net_admin,-setpcap --inh-caps -net_admin,-setpcap \
     -- gosu devbox /usr/local/bin/user-setup.sh "$@"

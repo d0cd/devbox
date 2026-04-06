@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Forward Claude Code hook data to cmux via the proxy sidecar.
+# Equivalent to `cmux claude-hook <event>` but routes through the proxy
+# since the cmux CLI isn't available inside the container.
+#
+# Usage: echo '{"session_id":"..."}' | devbox-claude-hook stop
+set -euo pipefail
+
+[ -n "${DEVBOX_CMUX_PROXY_PORT:-}" ] || exit 0
+
+event="${1:-}"
+[ -n "$event" ] || exit 0
+
+input="$(cat)"
+
+curl -s -o /dev/null -X POST \
+    -H "Content-Type: application/json" \
+    -d "{\"event\":\"$event\",\"data\":$input}" \
+    "http://proxy:8080/_devbox/claude-hook" 2>/dev/null || true

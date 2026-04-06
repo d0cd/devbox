@@ -141,6 +141,9 @@ class Enforcer:
 
     def request(self, flow: http.HTTPFlow) -> None:
         """Block HTTP requests to non-allowed domains."""
+        # Skip /_devbox/ internal endpoints — handled by the notifier addon.
+        if flow.request.path.startswith("/_devbox/"):
+            return
         self._maybe_reload()
         host = flow.request.pretty_host
         if not _is_allowed(host, self.allowlist):

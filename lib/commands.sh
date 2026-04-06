@@ -112,7 +112,7 @@ project_hash() {
     elif command -v shasum &>/dev/null; then
         echo -n "$path" | shasum -a 256 | cut -c1-16
     else
-        ui_error "Neither sha256sum nor shasum found. Cannot compute project hash."
+        ui_error "Neither sha256sum nor shasum found. Install coreutils to fix this."
         return 1
     fi
 }
@@ -206,7 +206,7 @@ ensure_project_dirs() {
         "${project_dir}/history" \
         "${project_dir}/logs" \
         "${project_dir}/memory"
-    (umask 077 && mkdir -p "${project_dir}/secrets" "${project_dir}/claude-data")
+    (umask 077 && mkdir -p "${project_dir}/secrets")
 
     # Copy default policy if none exists for this project.
     # Private configs policy takes precedence over the built-in template.
@@ -242,7 +242,7 @@ ENVEOF
 
 # Ensure global devbox directories exist.
 ensure_global_dirs() {
-    (umask 077 && mkdir -p "${DEVBOX_DATA}/secrets" "${DEVBOX_DATA}/claude-data")
+    (umask 077 && mkdir -p "${DEVBOX_DATA}/secrets" "${DEVBOX_DATA}/claude")
     mkdir -p "${DEVBOX_CONFIG}"
 
     # Create a placeholder secrets file if none exists.
@@ -385,6 +385,7 @@ _resolve_project_arg() {
             fi
         else
             ui_error "Not a directory or known project: ${arg}"
+            ui_info "Run 'devbox status' to see running sessions, or pass a valid directory path."
             return 1
         fi
     fi
@@ -414,13 +415,35 @@ cmd_start() {
     container_start "$project_path" "$hash"
 }
 
-cmd_shell() {
-    container_shell "${1:-}"
-}
-
 cmd_stop() {
     local target_name="${1:-}"
-    # Show which session will be stopped for clarity.
+
+    # Stop all running sessions.
+    if [ "$target_name" = "all" ]; then
+        local projects
+        projects="$(_find_devbox_projects)"
+        if [ -z "$projects" ]; then
+            ui_info "No running devbox sessions."
+            return 0
+        fi
+        if ! ui_confirm "Stop all running sessions?"; then
+            ui_info "Cancelled."
+            return 0
+        fi
+        while IFS= read -r project; do
+            local hash
+            hash="$(_hash_from_compose_project "$project")"
+            local name
+            name="$(_project_name_for_hash "$hash")"
+            _export_compose_env "$project"
+            docker compose $(_compose_file_args) -p "$project" down
+            ui_info "Stopped: ${name}"
+        done <<<"$projects"
+        _cmux_proxy_stop
+        return 0
+    fi
+
+    # Stop a single session.
     local project
     project="$(_require_single_project "$target_name")" || return 1
     local hash
@@ -438,6 +461,7 @@ cmd_stop() {
     fi
     _export_compose_env "$project"
     docker compose $(_compose_file_args) -p "$project" down
+    _cmux_proxy_stop
     ui_info "Container stack stopped."
 }
 
@@ -682,7 +706,7 @@ cmd_logs() {
         case "$1" in
             --since)
                 if [ $# -lt 2 ] || [ -z "${2:-}" ]; then
-                    ui_error "--since requires a timestamp argument"
+                    ui_error "--since requires a timestamp argument (e.g., --since 2024-01-01 or --since 1h)"
                     return 1
                 fi
                 since="$2"
@@ -690,7 +714,7 @@ cmd_logs() {
                 ;;
             --until)
                 if [ $# -lt 2 ] || [ -z "${2:-}" ]; then
-                    ui_error "--until requires a timestamp argument"
+                    ui_error "--until requires a timestamp argument (e.g., --until 2024-12-31)"
                     return 1
                 fi
                 until="$2"
@@ -918,6 +942,7 @@ USAGE:
   devbox start [path]      Explicitly start a new session
   devbox resume [name]     Shell into a running session by name
   devbox stop [name]       Stop a session
+  devbox stop all          Stop all running sessions
   devbox status            Show running sessions
   devbox info              Show container status and project info
   devbox profile [name]    Install a language profile (interactive if no name)

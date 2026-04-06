@@ -60,6 +60,7 @@ allowlist_show() {
 
     if [ ! -f "$policy_file" ]; then
         ui_error "Policy file not found: $policy_file"
+        ui_info "Start a session first (devbox start) to create the default policy."
         return 1
     fi
 
@@ -93,13 +94,13 @@ _allowlist_add_bulk() {
     local tmpfile
     tmpfile="$(mktemp)"
     if [ -z "$tmpfile" ] || [ ! -f "$tmpfile" ]; then
-        ui_error "Failed to create temporary file."
+        ui_error "Failed to create temporary file. Check disk space: df -h /tmp"
         return 1
     fi
     trap 'rm -f "$tmpfile"' RETURN
 
     (
-        flock -w 5 9 || { ui_error "Failed to acquire policy file lock."; return 1; }
+        flock -w 5 9 || { ui_error "Failed to acquire policy file lock. Another devbox process may be writing. Try again."; return 1; }
 
         cat "$policy_file" >"$tmpfile"
 
@@ -138,6 +139,7 @@ allowlist_add() {
 
     if [ ! -f "$policy_file" ]; then
         ui_error "Policy file not found: $policy_file"
+        ui_info "Start a session first (devbox start) to create the default policy."
         return 1
     fi
 
@@ -165,15 +167,19 @@ _allowlist_remove_inner() {
     local tmpfile
     tmpfile="$(mktemp)"
     if [ -z "$tmpfile" ] || [ ! -f "$tmpfile" ]; then
-        ui_error "Failed to create temporary file."
+        ui_error "Failed to create temporary file. Check disk space: df -h /tmp"
         return 1
     fi
     trap 'rm -f "$tmpfile"' RETURN
-    awk -v d="$domain" "
-    ${_AWK_STRIP_DOMAIN}
-    { if (line != d) print \$0 }
-    " "$policy_file" >"$tmpfile"
-    (umask 077 && mv "$tmpfile" "$policy_file")
+
+    (
+        flock -w 5 9 || { ui_error "Failed to acquire policy file lock. Another devbox process may be writing. Try again."; return 1; }
+        awk -v d="$domain" "
+        ${_AWK_STRIP_DOMAIN}
+        { if (line != d) print \$0 }
+        " "$policy_file" >"$tmpfile"
+        (umask 077 && mv "$tmpfile" "$policy_file")
+    ) 9>"${policy_file}.lock" || return 1
     trap - RETURN
 
     ui_info "Removed '$domain' from allowlist."
@@ -194,6 +200,7 @@ allowlist_remove() {
 
     if [ ! -f "$policy_file" ]; then
         ui_error "Policy file not found: $policy_file"
+        ui_info "Start a session first (devbox start) to create the default policy."
         return 1
     fi
 
@@ -213,7 +220,7 @@ allowlist_reset() {
     local policy_file="$1"
 
     if [ ! -f "${DEVBOX_ROOT}/templates/policy.yml" ]; then
-        ui_error "Default policy template not found."
+        ui_error "Default policy template not found at ${DEVBOX_ROOT}/templates/policy.yml. Try 'devbox update' to restore it."
         return 1
     fi
 

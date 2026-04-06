@@ -58,6 +58,8 @@ Host (macOS / Linux)
     │     │   │  │                                           │  │
     │     │   │  │  mitmproxy:8080                           │  │
     │     │   │  │    ├── enforcer.py (allowlist)             │  │
+    │     │   │  │    ├── injector.py (credentials)           │  │
+    │     │   │  │    ├── notifier.py (cmux)                  │  │
     │     │   │  │    └── logger.py   (SQLite)               │  │
     │     │   │  │                                           │  │
     │     │   │  │  Mounts:                                  │  │
@@ -85,7 +87,7 @@ Every project runs exactly two containers orchestrated by Docker Compose:
 
 1. **Agent container** (`devbox-agent`) — Ubuntu 24.04 base with all dev tools. Lives exclusively on the `sandbox` network (`internal: true`), meaning it has **no route to the internet**. All outbound is further locked down by iptables. Users exec into this container via `devbox resume`.
 
-2. **Proxy sidecar** (`devbox-proxy`) — Python 3.12-slim with mitmproxy. Bridges the `sandbox` and `external` networks — the sole egress path for the agent. Runs two chained addons: domain enforcement and request logging.
+2. **Proxy sidecar** (`devbox-proxy`) — Python 3.12-slim with mitmproxy. Bridges the `sandbox` and `external` networks — the sole egress path for the agent. Runs four chained addons: domain enforcement, credential injection, cmux notification, and request logging.
 
 ### Dual-Network Isolation
 
@@ -189,7 +191,7 @@ The proxy sidecar runs `enforcer.py`, which intercepts every HTTP request and HT
 3. Exact matches and `*.` prefix wildcards supported (e.g., `*.github.com` matches `api.github.com`)
 4. Non-matching requests get a `403 Forbidden` with body: `BLOCKED by devbox enforcer: <host> is not in the allowlist`
 
-The proxy CA certificate is generated on first run, shared via a Docker volume (`proxy-ca`), and installed into the agent's system trust store by the entrypoint. This gives mitmproxy full HTTPS visibility — it can inspect, log, and enforce even for TLS traffic.
+The proxy CA certificate is generated on first run. The private key is persisted on a proxy-only volume (`proxy-ca-keypair`), while only the public certificate is shared with the agent via a separate volume (`proxy-ca-cert`, mounted read-only). The agent entrypoint installs this certificate into the system trust store. This gives mitmproxy full HTTPS visibility — it can inspect, log, and enforce even for TLS traffic — without exposing the CA private key to the agent.
 
 **Policy hot-reload:** The enforcer checks the policy file's mtime every `DEVBOX_RELOAD_INTERVAL` seconds (default: 30). When `devbox allowlist add` modifies the file on the host, the proxy picks up the change without restart.
 
@@ -204,7 +206,7 @@ The proxy CA certificate is generated on first run, shared via a Docker volume (
 | Attempts IPv6 bypass | ip6tables OUTPUT DROP (fail-closed) |
 | Listens for inbound connections | iptables INPUT DROP |
 | Attempts network forwarding | iptables FORWARD DROP |
-| Container escape (kernel exploit) | Out of scope — keep Docker current |
+| Container escape (kernel exploit) | Defense-in-depth: `read_only` rootfs, `cap_drop: ALL`, NET_ADMIN dropped from bounding set after init. Keep Docker current. |
 
 ### Layer 3 — Credential Isolation
 
@@ -254,19 +256,37 @@ restart: unless-stopped              # Auto-recover from crashes
 
 **Capability drop after init:** After `firewall_init()` completes, the entrypoint uses `setpriv --bounding-set -net_admin --inh-caps -net_admin` to irrevocably drop `NET_ADMIN` from the bounding set before switching to the unprivileged user. Once removed from the bounding set, no child process can ever regain `NET_ADMIN` — the kernel enforces this. The iptables rules become immutable from inside the container's main process tree.
 
+### Mount Map and Permissions
+
+| Container path | Host path | Mode | Purpose |
+|---|---|---|---|
+| `/workspace` | `~/projects/<name>` | **rw** | Project source code |
+| `/devbox` | `~/.config/devbox` | ro | Global config, OpenCode |
+| `/devbox/.private` | `~/configs/devbox` | ro | Private overlay (settings, hooks, skills) |
+| `/data/history` | `~/.devbox/<hash>/history` | rw | Shell history |
+| `/home/devbox/.claude` | `~/.devbox/claude` | **rw** | Claude Code state (credentials, conversations, plugins) |
+| `/home/devbox/.opencode-mem/project` | `~/.devbox/<hash>/memory` | rw | OpenCode memory |
+| `/home/devbox/.opencode-mem/shared` | Docker volume | rw | Shared OpenCode memory |
+| `/run/proxy-ca` | Docker volume | ro | Proxy CA certificate |
+
+Read-only rootfs (`read_only: true`) prevents persistence attacks — a compromised agent cannot modify system binaries, install backdoors, or tamper with the firewall scripts. Writable paths are constrained to tmpfs mounts and the bind mounts above.
+
 ### Honest Threat Model
 
 | Threat | Mitigation | Residual risk |
 |--------|-----------|---------------|
 | Agent exfiltrates data | Dual-layer network + domain allowlist | Can still send to allowed domains |
 | Prompt injection via project files | Network layer limits destinations; credentials not in agent env | In-boundary actions cannot be prevented |
-| Credential theft | Proxy-layer injection — agent gets phantom tokens, real keys never enter container | GH_TOKEN remains in agent for git operations |
+| Credential theft (API keys) | Proxy-layer injection — agent gets phantom tokens, real keys never enter container | GH_TOKEN remains in agent for git operations |
+| Claude OAuth token access | `~/.claude/.credentials.json` is rw — agent can read OAuth tokens | Accepted: agent already has API access via the proxy; the token grants no additional access beyond what the proxy allows |
+| Malware persistence | `read_only: true` rootfs — system paths immutable | Agent can persist in writable mounts (`~/.claude/`, `/workspace`) |
 | Git token over-scope | N/A — user responsibility | Token may grant access beyond mounted project |
 | Container escape | `cap_drop: ALL`, `no-new-privileges`, NET_ADMIN dropped after init | Kernel exploits remain possible |
 | Firewall modification | NET_ADMIN irrevocably dropped from bounding set after firewall init | `docker exec -u 0` retains container-level caps |
 | DNS tunneling | DNS restricted to Docker resolver (127.0.0.11) | Docker resolver is trusted |
 | IPv6 bypass | `ip6tables -P OUTPUT DROP` (fail-closed — container refuses to start on failure) | Requires ip6tables binary in container |
 | Project file tampering | /workspace is rw by design — agent needs to edit code | Malicious commits, git hook injection possible |
+| Claude hooks/settings tampering | `~/.claude/` is rw — agent can modify hooks | Private overlay re-applies settings on restart |
 
 ---
 
@@ -274,13 +294,14 @@ restart: unless-stopped              # Auto-recover from crashes
 
 ### Addon Chain
 
-mitmproxy loads three addons in order:
+mitmproxy loads four addons in order:
 
 1. **`enforcer.py`** — Domain allowlist enforcement
 2. **`injector.py`** — Proxy-layer credential injection (strip agent auth headers, inject real credentials)
-3. **`logger.py`** — SQLite request/response logging
+3. **`notifier.py`** — cmux integration (sidebar status, notifications via host relay)
+4. **`logger.py`** — SQLite request/response logging
 
-All are loaded via `mitmdump -s enforcer.py -s injector.py -s logger.py`. Order matters: the enforcer blocks disallowed domains before the injector touches headers (blocked flows never receive credentials). The logger runs last, recording the final state.
+All are loaded via `mitmdump -s enforcer.py -s injector.py -s notifier.py -s logger.py`. Order matters: the enforcer blocks disallowed domains before the injector touches headers (blocked flows never receive credentials). The logger runs last, recording the final state.
 
 ### enforcer.py
 
@@ -290,9 +311,65 @@ All are loaded via `mitmdump -s enforcer.py -s injector.py -s logger.py`. Order 
 - Exact: `host == pattern`
 - Wildcard: `*.example.com` matches `example.com` and `sub.example.com`
 
+**Internal endpoints:** Requests to `/_devbox/*` paths are skipped by the enforcer — these are handled by the notifier addon for cmux integration and never leave the proxy.
+
 **Blocking:** Both `request()` (HTTP) and `http_connect()` (HTTPS CONNECT) hooks check the allowlist. Blocked responses include the host (truncated to 253 chars to prevent oversized responses from malicious Host headers).
 
 **Hot-reload:** The `_maybe_reload()` method, called on every request, checks if `RELOAD_INTERVAL` seconds have passed since the last mtime check. If the file's mtime changed, it reloads. This means `devbox allowlist add` takes effect within one interval without restarting the proxy.
+
+### notifier.py — cmux Integration
+
+The agent container cannot reach the host directly (internal-only network). cmux runs on the host and communicates via a Unix socket that can't bridge into containers. The notification system uses a multi-hop relay:
+
+```
+┌─────────────────────────────────────┐
+│  Agent Container (sandbox network)  │
+│                                     │
+│  Claude Code fires hook             │
+│       │                             │
+│       │ stdin JSON                  │
+│       ▼                             │
+│  devbox-claude-hook <event>         │
+│       │                             │
+│       │ POST /_devbox/claude-hook   │
+│       │ (HTTP via proxy env vars)   │
+└───────┼─────────────────────────────┘
+        │ sandbox network (internal)
+┌───────▼─────────────────────────────┐
+│  Proxy Sidecar (sandbox + external) │
+│                                     │
+│  notifier.py intercepts /_devbox/*  │
+│       │                             │
+│       │ TCP to host.docker.internal │
+│       │ JSON-RPC: claude-hook.stop  │
+└───────┼─────────────────────────────┘
+        │ external network → host
+┌───────▼─────────────────────────────┐
+│  Host (macOS)                       │
+│                                     │
+│  cmux-proxy.py (TCP relay daemon)   │
+│       │                             │
+│       │ subprocess:                 │
+│       │ cmux claude-hook <event>    │
+│       │ (with stdin JSON piped)     │
+│       ▼                             │
+│  cmux app (Unix socket)             │
+│  → sidebar status pills            │
+│  → desktop notifications           │
+│  → session tracking                │
+└─────────────────────────────────────┘
+```
+
+**Why this chain:** Each hop crosses one isolation boundary. The agent can only reach the proxy (iptables). The proxy can reach the host (external network). The host daemon has cmux socket access. No firewall exceptions needed on the agent.
+
+**What cmux handles:** All rendering — sidebar status pills ("Working", "Idle", "Needs input"), desktop notifications with Claude's actual response text, session tracking. The hooks pipe raw JSON from Claude Code; cmux interprets it natively via `cmux claude-hook`.
+
+**Internal endpoints:** The notifier intercepts requests to `/_devbox/*` paths:
+- `/_devbox/claude-hook` — forwards Claude Code hook JSON to `cmux claude-hook` via the host proxy
+- `/_devbox/notify` — sends a notification via `notification.create` JSON-RPC
+- `/_devbox/status` — sets sidebar status via text protocol
+
+**Host-side proxy (`cmux-proxy.py`):** TCP relay started by `devbox` when cmux is detected. Listens on an ephemeral port, filters commands against an allowlist, injects workspace IDs, and forwards to the cmux Unix socket. The cmux socket connection is established at startup while the proxy is still in the cmux process tree (required for cmux's process-lineage auth). Idle timeout: 1 hour (configurable via `DEVBOX_CMUX_PROXY_IDLE`).
 
 ### logger.py
 
@@ -550,7 +627,8 @@ Docker-managed volumes:
 
 | Volume | Container path | Purpose |
 |--------|---------------|---------|
-| `proxy-ca` | `/run/proxy-ca` (agent, ro) and `/ca` (proxy, rw) | Shared mitmproxy CA certificate |
+| `proxy-ca-keypair` | `/ca` (proxy only, rw) | CA private key + cert (persists across restarts) |
+| `proxy-ca-cert` | `/run/proxy-ca` (agent, ro) and `/ca-cert` (proxy, rw) | Public CA certificate only (shared with agent) |
 | `devbox-shared-memory` | `~/.opencode-mem/shared` | Cross-project OpenCode memory |
 
 ---
@@ -569,11 +647,14 @@ devbox/
 │   ├── Dockerfile              # Proxy sidecar image (Python 3.12-slim)
 │   ├── entrypoint.sh           # Proxy entrypoint (CA gen + mitmdump)
 │   ├── enforcer.py             # Domain allowlist addon
+│   ├── injector.py             # Credential injection addon
+│   ├── notifier.py             # cmux notification addon
 │   └── logger.py               # SQLite logging addon
 ├── lib/
 │   ├── commands.sh             # CLI command handlers and helpers
 │   ├── container.sh            # Container lifecycle (build, start, shell, status)
 │   ├── firewall.sh             # iptables + ip6tables setup
+│   ├── mount.sh                # Volume mount management
 │   ├── secrets.sh              # Secrets management (set/show/edit/remove)
 │   ├── profile.sh              # Profile management and menus
 │   ├── allowlist.sh            # Allowlist CRUD operations
@@ -595,6 +676,7 @@ devbox/
 │       └── skills/
 ├── templates/
 │   ├── policy.yml              # Default network policy
+│   ├── claude-hooks.json       # Default Claude Code hooks/settings
 │   ├── AGENTS.md               # Per-project agent docs template
 │   ├── zshrc                   # Container zsh config
 │   ├── tmux.conf               # Container tmux config

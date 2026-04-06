@@ -373,7 +373,7 @@ The agent container cannot reach the host directly (internal-only network). cmux
 - `/_devbox/notify` — sends a notification via `notification.create` JSON-RPC
 - `/_devbox/status` — sets sidebar status via text protocol
 
-**Host-side proxy (`cmux-proxy.py`):** TCP relay started by `devbox` when cmux is detected. Listens on an ephemeral port, filters commands against an allowlist, injects workspace IDs, and forwards to the cmux Unix socket. The cmux socket connection is established at startup while the proxy is still in the cmux process tree (required for cmux's process-lineage auth). Idle timeout: 1 hour (configurable via `DEVBOX_CMUX_PROXY_IDLE`).
+**Host-side proxy (`cmux-proxy.py`):** TCP relay started by `devbox` when cmux is detected. Listens on fixed port 19876, filters commands against an allowlist, injects workspace IDs, and forwards to the cmux Unix socket. The cmux socket connection is established at startup while the proxy is still in the cmux process tree (required for cmux's process-lineage auth). Idle timeout: 1 hour (configurable via `DEVBOX_CMUX_PROXY_IDLE`).
 
 ### logger.py
 

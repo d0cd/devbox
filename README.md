@@ -27,6 +27,7 @@ Each project runs in its own Docker container with strict network enforcement, f
 - **Tool-agnostic** — Claude Code, OpenCode, Gemini CLI, Codex, neovim — all available inside
 - **Private config overlay** — bring your own configs from a private repo, optionally pre-built into the image
 - **Language profiles** — one-command setup for Rust, Python, Node.js, Go
+- **cmux integration** — sidebar status, desktop notifications, and session tracking when running inside [cmux](https://cmux.com)
 
 ## Quick Start
 
@@ -244,6 +245,18 @@ Docker-managed volumes (not on host filesystem):
 | `proxy-ca-keypair` | `/ca` (proxy only, rw) | CA private key + cert (persists across restarts) |
 | `proxy-ca-cert` | `/run/proxy-ca` (agent, ro) and `/ca-cert` (proxy, rw) | Public CA certificate only |
 | `devbox-shared-memory` | `~/.opencode-mem/shared` | Cross-project OpenCode memory |
+
+## cmux Integration
+
+When running inside [cmux](https://cmux.com), devbox automatically provides:
+
+- **Sidebar status** — shows "Working", "Idle", or "Needs input" for each Claude session
+- **Desktop notifications** — rich notifications with Claude's actual response when a task completes
+- **Session tracking** — all Claude Code hook events forwarded to cmux natively
+
+No configuration needed — devbox detects cmux via `CMUX_WORKSPACE_ID` and starts a relay proxy automatically. Notifications route through the proxy sidecar (agent → proxy → host → cmux) so the container never talks to the host directly.
+
+For architecture details, see [DESIGN.md](docs/DESIGN.md#notifierpy--cmux-integration).
 
 ## API Observability
 

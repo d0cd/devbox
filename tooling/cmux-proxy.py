@@ -140,6 +140,25 @@ def _handle_claude_hook(method: str, msg: dict, client: socket.socket) -> None:
         client.sendall((resp + "\n").encode())
 
 
+def _devbox_sessions_running() -> bool:
+    """Check if any devbox containers are running."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["docker", "compose", "ls", "--format", "json"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return False
+        # Check for any project starting with "devbox-".
+        return "devbox-" in result.stdout
+    except Exception:
+        return False
+
+
 def make_error_response(req_id: Optional[str], message: str) -> str:
     """Generate a JSON error response."""
     return json.dumps({"id": req_id, "ok": False, "error": message})
@@ -358,8 +377,8 @@ def main() -> None:
             )
             t.start()
         except socket.timeout:
-            if state.is_idle():
-                print("[cmux-proxy] idle timeout, exiting", file=sys.stderr)
+            if state.is_idle() and not _devbox_sessions_running():
+                print("[cmux-proxy] no active devbox sessions, exiting", file=sys.stderr)
                 break
         except OSError:
             break

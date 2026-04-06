@@ -45,8 +45,19 @@ Always run these before `git push` to avoid CI failures:
 make ci        # runs lint + all tests (mirrors CI exactly)
 make lint      # pre-commit only
 make test      # bats + pytest only
+make smoke     # start → verify shell ready → stop (requires Docker)
 ```
 `.pre-commit-config.yaml` is the single source of truth for all linter versions. CI runs `pre-commit run --all-files` — no independent tool installs.
+
+## Mandatory: End-to-End Verification
+
+After ANY change to these files, run `make smoke` or manually verify the startup-to-shell path:
+- `entrypoint.sh` or `user-setup.sh` — shell config, overlays, readiness signaling
+- `docker-compose.yml` — mounts, env vars, tmpfs, capabilities
+- `Dockerfile` — skel, image layers, installed tools
+- `lib/container.sh` — startup flow, readiness wait, compose args
+
+The container has a startup race: `docker exec` can succeed before `user-setup.sh` finishes. The readiness sentinel (`/tmp/.devbox-ready`) gates exec. If you change the startup sequence, verify the sentinel is created AFTER all setup completes.
 
 ## Security Rules
 

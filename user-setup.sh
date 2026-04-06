@@ -84,6 +84,10 @@ fi
 
 # --- Hold container open or run custom command ---
 cd /workspace
+
+# Signal that setup is complete. container_start() waits for this before exec.
+touch /tmp/.devbox-ready
+
 if [ $# -eq 0 ]; then
     echo "[entrypoint] Environment ready. Accepting exec sessions."
     # Run tail in the background and wait — keeps bash as PID 1 so it

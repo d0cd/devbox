@@ -458,7 +458,7 @@ container_start() {
 
     local elapsed=0
     while ! docker compose $compose_args \
-        -p "${compose_project}" exec -T agent true &>/dev/null 2>&1; do
+        -p "${compose_project}" exec -T agent test -f /tmp/.devbox-ready &>/dev/null 2>&1; do
         sleep 1
         elapsed=$((elapsed + 1))
 

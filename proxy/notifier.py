@@ -95,9 +95,7 @@ class CmuxNotifier:
 
     def _send_to_proxy(self, payload: str) -> None:
         """Send a message to the cmux proxy on the host."""
-        port = os.environ.get("DEVBOX_CMUX_PROXY_PORT", "")
-        if not port:
-            return
+        port = os.environ.get("DEVBOX_CMUX_PROXY_PORT", "19876")
         try:
             sock = socket.create_connection(
                 ("host.docker.internal", int(port)), timeout=2

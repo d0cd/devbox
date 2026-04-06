@@ -117,14 +117,6 @@ class TestHandleStatus:
 class TestSendToProxy:
     """Verify TCP communication with cmux proxy."""
 
-    @patch.dict("os.environ", {"DEVBOX_CMUX_PROXY_PORT": ""})
-    def test_noop_when_no_port(self):
-        n = CmuxNotifier()
-        # Should return silently — no socket call.
-        with patch("notifier.socket") as mock_socket:
-            n._send_to_proxy("test\n")
-        mock_socket.create_connection.assert_not_called()
-
     @patch.dict("os.environ", {"DEVBOX_CMUX_PROXY_PORT": "9999"})
     @patch("notifier.socket.create_connection")
     def test_sends_payload_to_host(self, mock_conn):

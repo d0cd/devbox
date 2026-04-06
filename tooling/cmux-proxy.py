@@ -103,6 +103,8 @@ def _handle_claude_hook(method: str, msg: dict, client: socket.socket) -> None:
             text=True,
             timeout=10,
         )
+        if result.returncode != 0:
+            print(f"[cmux-proxy] claude-hook {event} failed (rc={result.returncode}): {result.stderr.strip()}", file=sys.stderr)
         resp = json.dumps({"id": msg.get("id"), "ok": result.returncode == 0})
         client.sendall((resp + "\n").encode())
     except Exception as e:
@@ -282,7 +284,8 @@ def main() -> None:
 
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind(("127.0.0.1", 0))
+    FIXED_PORT = 19876
+    server.bind(("127.0.0.1", FIXED_PORT))
     server.listen(8)
     server.settimeout(1.0)
 

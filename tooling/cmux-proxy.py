@@ -187,11 +187,16 @@ def _get_surface_id(cmux: CmuxConnection, workspace_id: str) -> Optional[str]:
     response cannot inject protocol commands through this path.
     """
     try:
-        msg = json.dumps({
-            "method": "surface.list",
-            "params": {"workspace_id": workspace_id},
-            "id": str(uuid.uuid4()),
-        }) + "\n"
+        msg = (
+            json.dumps(
+                {
+                    "method": "surface.list",
+                    "params": {"workspace_id": workspace_id},
+                    "id": str(uuid.uuid4()),
+                }
+            )
+            + "\n"
+        )
         resp = cmux.send_recv(msg.encode())
         data = json.loads(resp.decode())
         surfaces = data.get("result", [])
@@ -345,17 +350,25 @@ def handle_client(
 
                     # Per-request workspace: trust sidecar > fallback to host env.
                     req_params = msg.get("params") or {}
-                    req_ws = req_params.get("workspace_id", "") if isinstance(req_params, dict) else ""
+                    req_ws = (
+                        req_params.get("workspace_id", "")
+                        if isinstance(req_params, dict)
+                        else ""
+                    )
                     effective_ws = _safe_cmux_id(req_ws) or fallback_workspace_id
 
                     if is_json_method_allowed(method):
                         if method.startswith("claude-hook."):
                             event = method.removeprefix("claude-hook.")
                             if event not in ALLOWED_CLAUDE_HOOK_EVENTS:
-                                resp = make_error_response(req_id, f"unknown event: {event}")
+                                resp = make_error_response(
+                                    req_id, f"unknown event: {event}"
+                                )
                                 client.sendall((resp + "\n").encode())
                             else:
-                                ok = _handle_claude_hook(event, req_params, effective_ws, cmux)
+                                ok = _handle_claude_hook(
+                                    event, req_params, effective_ws, cmux
+                                )
                                 resp = json.dumps({"id": req_id, "ok": ok})
                                 client.sendall((resp + "\n").encode())
                         else:
@@ -366,11 +379,16 @@ def handle_client(
                                 client.sendall(cmux_resp)
                             except (OSError, ConnectionError):
                                 client.sendall(
-                                    make_error_response(req_id, "cmux unavailable").encode() + b"\n"
+                                    make_error_response(
+                                        req_id, "cmux unavailable"
+                                    ).encode()
+                                    + b"\n"
                                 )
                     else:
                         print(f"[cmux-proxy] blocked: {method}", file=sys.stderr)
-                        resp = make_error_response(req_id, f"method '{method}' blocked by devbox proxy")
+                        resp = make_error_response(
+                            req_id, f"method '{method}' blocked by devbox proxy"
+                        )
                         client.sendall((resp + "\n").encode())
                 else:
                     # Per-request workspace from --tab= flag, else host env.

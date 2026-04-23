@@ -133,7 +133,7 @@ class TestSafeCmuxId:
         "value",
         [
             "00000000-0000-0000-0000-000000000000",  # UUID
-            "workspace:2",                            # Short ref
+            "workspace:2",  # Short ref
             "abc_def-123",
             "A1B2",
         ],
@@ -144,16 +144,16 @@ class TestSafeCmuxId:
     @pytest.mark.parametrize(
         "value",
         [
-            "abc def",               # space
+            "abc def",  # space
             "abc\nset_status evil",  # newline injection
-            "abc\tpipe",              # tab
-            "abc|pipe",               # pipe char
-            "abc\r",                  # carriage return
-            "",                       # empty
-            None,                     # None
-            123,                      # wrong type
-            "a" * 200,                # too long (>128)
-            "abc;rm -rf /",           # shell injection attempt
+            "abc\tpipe",  # tab
+            "abc|pipe",  # pipe char
+            "abc\r",  # carriage return
+            "",  # empty
+            None,  # None
+            123,  # wrong type
+            "a" * 200,  # too long (>128)
+            "abc;rm -rf /",  # shell injection attempt
         ],
     )
     def test_rejects_unsafe(self, value):
@@ -180,7 +180,9 @@ class TestWorkspaceInjectionSecurity:
     """Workspace ID injection must not enable protocol injection."""
 
     def test_rejects_newline_in_workspace(self):
-        result = _inject_workspace_text("set_status claude Running", "abc\nset_status evil")
+        result = _inject_workspace_text(
+            "set_status claude Running", "abc\nset_status evil"
+        )
         assert "\n" not in result.replace("set_status claude Running", "")
         # Unsafe workspace falls back to no injection.
         assert result == "set_status claude Running"

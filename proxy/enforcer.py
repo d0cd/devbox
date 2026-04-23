@@ -122,7 +122,9 @@ def _load_allowlist(path: Path) -> list[str]:
                 continue
         host_part, port = _split_entry(d)
         # Reject unsupported wildcard syntaxes (only *. prefix is allowed).
-        if host_part.count("*") > 1 or ("*" in host_part and not host_part.startswith("*.")):
+        if host_part.count("*") > 1 or (
+            "*" in host_part and not host_part.startswith("*.")
+        ):
             logger.warning("Ignoring unsupported wildcard pattern: %s", d)
             continue
         # Reject out-of-range ports.

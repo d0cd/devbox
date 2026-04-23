@@ -31,9 +31,25 @@ create_test_policy() {
     echo "$tmpfile"
 }
 
-# Mock iptables that records calls instead of executing them.
+# Mock iptables + ip6tables that record calls instead of executing them.
+# Stubs both so tests are stable across environments where ip6tables may or
+# may not be installed (e.g. macOS without it, Ubuntu CI with it but no caps).
 mock_iptables() {
     export IPTABLES_CALLS=""
+    # Force firewall.sh's `command -v ip6tables` check to succeed so tests
+    # exercise the IPv6 branch, regardless of host.
+    ip6tables() {
+        IPTABLES_CALLS="${IPTABLES_CALLS}ip6tables $*
+"
+        return 0
+    }
+    command() {
+        if [ "$1" = "-v" ] && [ "$2" = "ip6tables" ]; then
+            return 0
+        fi
+        builtin command "$@"
+    }
+    export -f ip6tables command
     iptables() {
         IPTABLES_CALLS="${IPTABLES_CALLS}iptables $*
 "

@@ -90,11 +90,17 @@ class TestIsAllowed:
         assert _is_allowed("api.example.com", ["api.example.com"], port=8080)
 
     def test_entry_with_port_matches_exact_port(self):
-        assert _is_allowed("host.docker.internal", ["host.docker.internal:11434"], port=11434)
+        assert _is_allowed(
+            "host.docker.internal", ["host.docker.internal:11434"], port=11434
+        )
 
     def test_entry_with_port_rejects_other_ports(self):
-        assert not _is_allowed("host.docker.internal", ["host.docker.internal:11434"], port=5432)
-        assert not _is_allowed("host.docker.internal", ["host.docker.internal:11434"], port=22)
+        assert not _is_allowed(
+            "host.docker.internal", ["host.docker.internal:11434"], port=5432
+        )
+        assert not _is_allowed(
+            "host.docker.internal", ["host.docker.internal:11434"], port=22
+        )
 
     def test_wildcard_with_port(self):
         assert _is_allowed("api.example.com", ["*.example.com:443"], port=443)

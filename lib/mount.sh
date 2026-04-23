@@ -253,11 +253,12 @@ mount_list() {
     local count=0
     while IFS= read -r line; do
         [ -z "$line" ] && continue
-        local hp cp mode
-        # Parse: /host/path:/container/path:mode
-        hp="$(echo "$line" | sed 's|:[^:]*:[^:]*$||')"
-        cp="$(echo "$line" | sed 's|^[^:]*:||; s|:[^:]*$||')"
-        mode="$(echo "$line" | sed 's|^.*:||')"
+        # Parse: /host/path:/container/path:mode — three fields, no colons in paths.
+        local hp cp mode parts
+        IFS=':' read -ra parts <<<"$line"
+        hp="${parts[0]}"
+        cp="${parts[1]}"
+        mode="${parts[2]}"
         hp="${hp/#$HOME/\~}"
         echo "  ${hp} → ${cp} (${mode})"
         count=$((count + 1))

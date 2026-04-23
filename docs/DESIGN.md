@@ -190,10 +190,15 @@ iptables runs as root during Phase 1 of the entrypoint, before dropping to the u
 
 The proxy sidecar runs `enforcer.py`, which intercepts every HTTP request and HTTPS CONNECT tunnel:
 
-1. Reads the domain allowlist from `/proxy/policy.yml` (YAML format)
-2. For each request, checks if `flow.request.pretty_host` matches any allowed entry
-3. Exact matches and `*.` prefix wildcards supported (e.g., `*.github.com` matches `api.github.com`)
-4. Non-matching requests get a `403 Forbidden` with body: `BLOCKED by devbox enforcer: <host> is not in the allowlist`
+1. Reads the allowlist from `/proxy/policy.yml` (YAML format)
+2. For each request, checks if `flow.request.pretty_host` (and optionally port) matches any allowed entry
+3. Entry syntax:
+   - `api.github.com` — hostname, any port
+   - `host.docker.internal:11434` — hostname, specific port only
+   - `*.github.com` — wildcard, any port (exact match too — matches `github.com` itself)
+   - `*.github.com:443` — wildcard, specific port only
+   - `[::1]:8080` — bracketed IPv6 with port
+4. Non-matching requests get a `403 Forbidden` with body: `BLOCKED by devbox enforcer: <host>:<port> is not in the allowlist`
 
 The proxy CA certificate is generated on first run. The private key is persisted on a proxy-only volume (`proxy-ca-keypair`), while only the public certificate is shared with the agent via a separate volume (`proxy-ca-cert`, mounted read-only). The agent entrypoint installs this certificate into the system trust store. This gives mitmproxy full HTTPS visibility — it can inspect, log, and enforce even for TLS traffic — without exposing the CA private key to the agent.
 
@@ -353,9 +358,9 @@ The agent container cannot reach the host directly (internal-only network). cmux
 │                                     │
 │  cmux-proxy.py (TCP relay daemon)   │
 │       │                             │
-│       │ subprocess:                 │
-│       │ cmux claude-hook <event>    │
-│       │ (with stdin JSON piped)     │
+│       │ inline cmux socket protocol │
+│       │ (set_status, notify_target, │
+│       │  clear_notifications, etc.) │
 │       ▼                             │
 │  cmux app (Unix socket)             │
 │  → sidebar status pills            │
@@ -369,11 +374,15 @@ The agent container cannot reach the host directly (internal-only network). cmux
 **What cmux handles:** All rendering — sidebar status pills ("Working", "Idle", "Needs input"), desktop notifications with Claude's actual response text, session tracking. The hooks pipe raw JSON from Claude Code; cmux interprets it natively via `cmux claude-hook`.
 
 **Internal endpoints:** The notifier intercepts requests to `/_devbox/*` paths:
-- `/_devbox/claude-hook` — forwards Claude Code hook JSON to `cmux claude-hook` via the host proxy
+- `/_devbox/claude-hook` — forwards Claude Code hook JSON to the host proxy for cmux sidebar/notification updates
 - `/_devbox/notify` — sends a notification via `notification.create` JSON-RPC
 - `/_devbox/status` — sets sidebar status via text protocol
 
-**Host-side proxy (`cmux-proxy.py`):** TCP relay started by `devbox` when cmux is detected. Listens on fixed port 19876, filters commands against an allowlist, injects workspace IDs, and forwards to the cmux Unix socket. The cmux socket connection is established at startup while the proxy is still in the cmux process tree (required for cmux's process-lineage auth). Idle timeout: 1 hour (configurable via `DEVBOX_CMUX_PROXY_IDLE`).
+**Host-side proxy (`cmux-proxy.py`):** TCP relay started by `devbox` when cmux is detected. Listens on fixed port 19876, filters commands against an allowlist, and forwards to the cmux Unix socket. Claude Code hook events are handled inline using the cmux socket protocol (no subprocess calls). The socket connection is established at startup while the proxy is still in the cmux process tree (required for cmux's process-lineage auth). The proxy auto-restarts on the next devbox command if it dies.
+
+**Workspace binding:** each devbox session's proxy sidecar is passed `CMUX_WORKSPACE_ID` at container start. `notifier.py` attaches this to every forwarded request and strips any agent-supplied `--tab=` / `--workspace=` / `params.workspace_id`. The host proxy treats the sidecar's value as authoritative — so sessions started in different cmux workspaces always route to the right workspace, regardless of which workspace the host daemon was first spawned from.
+
+**Known limitation — local trust:** the host proxy binds `127.0.0.1:19876` with no authentication. Any process on the Mac can send commands that pass the allowlist (sidebar status, notifications, claude-hook events). The blast radius is limited to cmux sidebar/notification manipulation — no data exfiltration, no code execution, no container access. An attacker with local code execution has equivalent capabilities through native macOS APIs (`osascript`, `NSUserNotification`) without this proxy. A shared-secret token scheme would close this but adds compose plumbing; treated as a defense-in-depth follow-up.
 
 ### logger.py
 

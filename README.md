@@ -12,11 +12,17 @@ Each project runs in its own Docker container with strict network enforcement, f
 - [Usage](#usage)
 - [Secrets Management](#secrets-management)
 - [Private Config Overlay](#private-config-overlay)
+- [cmux Integration](#cmux-integration)
+- [Local Host Services](#local-host-services)
 - [API Observability](#api-observability)
 - [Per-Project Configuration](#per-project-configuration)
+- [Resource Tuning](#resource-tuning)
 - [Security Model](#security-model)
 - [Architecture](#architecture)
+- [Environment Variables](docs/ENVIRONMENT.md)
 - [System Requirements](#system-requirements)
+- [Updating](#updating)
+- [Uninstalling](#uninstalling)
 - [Troubleshooting](#troubleshooting)
 
 ## Features
@@ -153,8 +159,6 @@ devbox auto-detects host credentials where possible:
 | Git identity | From `devbox secrets set GIT_AUTHOR_NAME/EMAIL` | One-time setup |
 | Other AI keys | From `devbox secrets set` | One-time setup |
 
-To start devbox without any API keys (for non-AI workflows): `DEVBOX_NO_SECRETS=1 devbox`
-
 ## Private Config Overlay
 
 Replicate your local dev environment inside the container without committing configs to the public codebase. Point devbox at your dotfiles — either a local directory or a private git repo:
@@ -258,6 +262,36 @@ No configuration needed — devbox detects cmux via `CMUX_WORKSPACE_ID` and star
 
 For architecture details, see [DESIGN.md](docs/DESIGN.md#notifierpy--cmux-integration).
 
+## Local Host Services
+
+The agent container is on an internal-only network — it cannot reach your host directly. To use host-side services like Ollama, a local Postgres, or a dev server running on your Mac, you must explicitly opt in via the allowlist and route through `host.docker.internal`.
+
+**1. Allowlist the specific host service (port-scoped):**
+
+```bash
+devbox allowlist add host.docker.internal:11434   # Ollama only
+```
+
+The allowlist supports `host:port` syntax — use it to narrow access to just the service you need. A plain `host.docker.internal` (no port) would grant access to **all** host ports and is discouraged.
+
+**2. Make the host service listen on all interfaces** (not just `127.0.0.1`), otherwise the Docker bridge can't reach it. For Ollama:
+
+```bash
+# On the host, before starting ollama:
+OLLAMA_HOST=0.0.0.0:11434 ollama serve
+```
+
+**3. Point clients in the container at `host.docker.internal`:**
+
+```bash
+# Inside the container
+export OLLAMA_HOST=http://host.docker.internal:11434
+```
+
+The request path is: agent → mitmproxy (allowlist check) → `host.docker.internal:11434` → host Ollama.
+
+> **Security note:** prefer the `host:port` form to grant minimum necessary access. A plain `host.docker.internal` entry allows the container to reach every host-bound port (postgres, redis, docker daemon, etc.). Consider whether you want the entry globally (`devbox allowlist add`) or just for one project (via a private config overlay).
+
 ## API Observability
 
 Every API call made through the proxy is logged to a SQLite database:
@@ -280,7 +314,10 @@ DEVBOX_RELOAD_INTERVAL=15
 DEVBOX_PRIVATE_CONFIGS=git@github.com:you/devbox-private.git
 DEVBOX_NAME=my-project
 DEVBOX_CREDENTIAL_INJECTION=false
+DEVBOX_VOLATILE_DIRS=node_modules,dist,.next
 ```
+
+`DEVBOX_VOLATILE_DIRS` isolates platform-specific build artifacts. Listed directories are overlaid with host-side volumes so Linux-built binaries (e.g. `node_modules`) don't conflict with macOS builds in the same project. Entries must be simple directory names (alphanumeric, dots, hyphens, underscores — no paths).
 
 Environment variables take precedence over `.devboxrc` values. Only whitelisted variables are accepted.
 

@@ -31,64 +31,117 @@ _cmux_clear_status() {
 # ---------------------------------------------------------------------------
 # cmux filtering proxy lifecycle
 # ---------------------------------------------------------------------------
+# The proxy must be spawned from within a cmux process tree — cmux
+# authenticates socket connections by process lineage. This means launchd
+# cannot manage it; we spawn it from the devbox CLI and let it persist.
+#
+# Robustness: _cmux_proxy_ensure is called on every _export_compose_env
+# (start, shell, resume, stop), so a dead proxy auto-restarts on the next
+# devbox command. The proxy itself has no subprocess calls (claude-hook
+# logic is inline socket protocol), minimizing crash vectors.
 
-_CMUX_PROXY_PID="${DEVBOX_DATA}/cmux-proxy.pid"
-_CMUX_PROXY_PORT_FILE="${DEVBOX_DATA}/cmux-proxy.port"
+_CMUX_PROXY_PORT="19876"
+_CMUX_PROXY_PID_FILE="${DEVBOX_DATA}/cmux-proxy.pid"
 
-# Start the cmux filtering proxy if running inside cmux and not already alive.
+# Health check: is the proxy actually functional (not just a live process)?
+# Returns 0 if healthy, 1 otherwise. A proxy can be "alive but broken" if
+# cmux restarts — the proxy process survives but its socket auth is gone.
+_cmux_proxy_healthy() {
+    python3 -c "
+import socket, json, sys
+try:
+    s = socket.create_connection(('127.0.0.1', ${_CMUX_PROXY_PORT}), timeout=1)
+    s.sendall((json.dumps({'id': 'hc', 'method': 'system.ping'}) + '\n').encode())
+    s.settimeout(1)
+    resp = s.recv(4096).decode()
+    s.close()
+    data = json.loads(resp)
+    sys.exit(0 if data.get('ok') and data.get('result', {}).get('pong') else 1)
+except Exception:
+    sys.exit(1)
+" 2>/dev/null
+}
+
+# Ensure the cmux proxy is running and functional. Respawns if dead or broken.
 # Exports DEVBOX_CMUX_PROXY_PORT for docker-compose.yml interpolation.
-_cmux_proxy_start() {
+#
+# The proxy reads CMUX_WORKSPACE_ID at startup as a *fallback* only — each
+# request is tagged with its sidecar's workspace_id. But the fallback still
+# matters for bare host-side test calls, so keep the env fresh by recording
+# it to a sidecar file and comparing on each invocation.
+_cmux_proxy_ensure() {
     _cmux_available || return 0
     [ -n "${CMUX_SOCKET_PATH:-}" ] || return 0
 
-    # Reuse existing proxy if alive.
-    if [ -f "$_CMUX_PROXY_PID" ]; then
-        local pid
-        pid="$(cat "$_CMUX_PROXY_PID" 2>/dev/null)" || true
+    export DEVBOX_CMUX_PROXY_PORT="${_CMUX_PROXY_PORT}"
+
+    local workspace_record="${DEVBOX_DATA}/cmux-proxy.workspace"
+    local current_ws="${CMUX_WORKSPACE_ID:-}"
+
+    # Reuse existing proxy if alive AND healthy AND workspace matches.
+    if [ -f "$_CMUX_PROXY_PID_FILE" ]; then
+        local pid recorded_ws=""
+        pid="$(cat "$_CMUX_PROXY_PID_FILE" 2>/dev/null)" || true
+        [ -f "$workspace_record" ] && recorded_ws="$(cat "$workspace_record" 2>/dev/null)"
         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-            if [ -f "$_CMUX_PROXY_PORT_FILE" ]; then
-                export DEVBOX_CMUX_PROXY_PORT="$(cat "$_CMUX_PROXY_PORT_FILE")"
+            if [ "$recorded_ws" = "$current_ws" ] && _cmux_proxy_healthy; then
                 return 0
             fi
+            # Broken, or workspace drifted — kill and respawn.
+            kill "$pid" 2>/dev/null || true
         fi
     fi
 
-    # Spawn proxy in background. Redirect output to log file so it doesn't
-    # trigger cmux activity highlights on the devbox terminal.
+    # Clean up stale PID / workspace marker before spawning.
+    rm -f "$_CMUX_PROXY_PID_FILE" "$workspace_record"
+
+    # Rotate the log if it's grown past ~1MB. Simple truncation — we only
+    # care about recent events, and the log is diagnostic only.
     local proxy_log="${DEVBOX_DATA}/cmux-proxy.log"
-    python3 "${DEVBOX_ROOT}/tooling/cmux-proxy.py" >>"$proxy_log" 2>&1 &
+    if [ -f "$proxy_log" ]; then
+        local log_size
+        log_size="$(wc -c <"$proxy_log" 2>/dev/null || echo 0)"
+        if [ "${log_size:-0}" -gt 1048576 ]; then
+            : >"$proxy_log"
+        fi
+    fi
+
+    # Spawn proxy detached from the controlling terminal so it survives when
+    # the spawning shell exits. The proxy itself calls setsid() at startup
+    # to create a new session (immune to SIGHUP). nohup + </dev/null close
+    # the tty handles so the proxy doesn't block on terminal I/O.
+    # Must be spawned from a cmux shell — cmux authenticates by process lineage.
+    nohup python3 "${DEVBOX_ROOT}/tooling/cmux-proxy.py" </dev/null >>"$proxy_log" 2>&1 &
     local proxy_pid=$!
     disown "$proxy_pid" 2>/dev/null || true
+    echo "$proxy_pid" > "$_CMUX_PROXY_PID_FILE"
+    printf '%s' "$current_ws" > "$workspace_record"
 
-    # Wait for port file (up to 3s, polling every 0.5s).
+    # Wait for the proxy to become healthy (up to 3s).
     local elapsed=0
-    while [ ! -f "$_CMUX_PROXY_PORT_FILE" ] && [ "$elapsed" -lt 6 ]; do
+    while ! _cmux_proxy_healthy && [ "$elapsed" -lt 6 ]; do
         sleep 0.5
         elapsed=$((elapsed + 1))
     done
-
-    if [ -f "$_CMUX_PROXY_PORT_FILE" ]; then
-        export DEVBOX_CMUX_PROXY_PORT="$(cat "$_CMUX_PROXY_PORT_FILE")"
-    fi
 }
 
-# Stop the cmux proxy if this is the last running devbox session.
-_cmux_proxy_stop() {
-    [ -f "$_CMUX_PROXY_PID" ] || return 0
-
-    # Don't kill the proxy if other sessions are still running.
-    local remaining
-    remaining="$(_find_devbox_projects)"
-    if [ -n "$remaining" ]; then
-        return 0
-    fi
-
+# Stop the cmux proxy (used by devbox stop --all and devbox clean --all).
+_cmux_proxy_unload() {
+    [ -f "$_CMUX_PROXY_PID_FILE" ] || return 0
     local pid
-    pid="$(cat "$_CMUX_PROXY_PID" 2>/dev/null)" || true
+    pid="$(cat "$_CMUX_PROXY_PID_FILE" 2>/dev/null)" || true
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
         kill "$pid" 2>/dev/null || true
+        # Give it a moment to exit cleanly before removing PID file.
+        local elapsed=0
+        while kill -0 "$pid" 2>/dev/null && [ "$elapsed" -lt 4 ]; do
+            sleep 0.25
+            elapsed=$((elapsed + 1))
+        done
+        # Force kill if still alive.
+        kill -9 "$pid" 2>/dev/null || true
     fi
-    rm -f "$_CMUX_PROXY_PID" "$_CMUX_PROXY_PORT_FILE"
+    rm -f "$_CMUX_PROXY_PID_FILE" "${DEVBOX_DATA}/cmux-proxy.workspace"
 }
 
 # Build compose file arguments. Includes the private override if present.
@@ -225,8 +278,8 @@ _export_compose_env() {
     export DEVBOX_PROXY_SECRETS_FILE="${project_dir}/secrets/.proxy.env"
     export DEVBOX_PHANTOM_FILE="${project_dir}/secrets/.phantom.env"
 
-    # Start cmux filtering proxy if running inside cmux.
-    _cmux_proxy_start
+    # Ensure cmux filtering proxy is running (launchd-managed).
+    _cmux_proxy_ensure
     export DEVBOX_CMUX_PROXY_PORT="${DEVBOX_CMUX_PROXY_PORT:-}"
 }
 
@@ -451,6 +504,29 @@ container_start() {
         fi
     fi
 
+    # Apply volatile directory mounts (platform-isolated build artifacts).
+    # Each dir in DEVBOX_VOLATILE_DIRS gets overlaid with a host-side directory
+    # so Linux/macOS build artifacts don't conflict.
+    if [ -n "${DEVBOX_VOLATILE_DIRS:-}" ]; then
+        local volatile_base="${project_dir}/volatile"
+        local override_file="${project_dir}/compose.override.yml"
+
+        for vdir in ${DEVBOX_VOLATILE_DIRS//,/ }; do
+            vdir="${vdir#"${vdir%%[![:space:]]*}"}"  # trim leading whitespace
+            vdir="${vdir%"${vdir##*[![:space:]]}"}"  # trim trailing whitespace
+            [ -z "$vdir" ] && continue
+            local host_dir="${volatile_base}/${vdir}"
+            local container_path="/workspace/${vdir}"
+            mkdir -p "$host_dir"
+            # Only add if not already in the override.
+            if ! grep -q "$container_path" "$override_file" 2>/dev/null; then
+                if ! mount_add "$override_file" "$host_dir" "$container_path" "rw"; then
+                    ui_warn "Failed to add volatile mount for '${vdir}'"
+                fi
+            fi
+        done
+    fi
+
     # Start the stack in detached mode.
     ui_info "Starting environment..."
     docker compose $compose_args \
@@ -527,6 +603,9 @@ container_status() {
     if [ -z "$projects" ]; then
         ui_info "No running devbox sessions."
     else
+        # Revive the cmux proxy if it died — status is a good moment to heal.
+        _cmux_proxy_ensure
+
         ui_header "Running Sessions"
         while IFS= read -r project; do
             local hash
@@ -545,7 +624,31 @@ container_status() {
             # Show resource usage and warnings for the agent container.
             _container_resource_warnings "$project"
         done <<<"$projects"
+
+        _cmux_proxy_status_line
     fi
+}
+
+# Print the cmux proxy status line for devbox status output.
+# Shows: Running (healthy), Unhealthy (respawn pending), Stopped, or Disabled.
+_cmux_proxy_status_line() {
+    _cmux_available || return 0
+
+    local pid=""
+    [ -f "$_CMUX_PROXY_PID_FILE" ] && pid="$(cat "$_CMUX_PROXY_PID_FILE" 2>/dev/null)"
+
+    local state
+    if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+        state="stopped"
+    elif _cmux_proxy_healthy; then
+        state="running (pid ${pid}, healthy)"
+    else
+        state="unhealthy (pid ${pid}) — will respawn on next devbox command"
+    fi
+
+    ui_header "cmux Proxy"
+    echo "    State: ${state}"
+    echo "    Port:  ${_CMUX_PROXY_PORT}"
 }
 
 # Check resource usage for a running project and warn if near limits.

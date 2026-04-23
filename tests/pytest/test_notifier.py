@@ -95,7 +95,8 @@ class TestHandleNotify:
 class TestHandleStatus:
     """Verify status command forwarding."""
 
-    def test_forwards_raw_body(self):
+    @patch.dict("os.environ", {"CMUX_WORKSPACE_ID": ""}, clear=False)
+    def test_forwards_body_without_tab_when_no_workspace(self):
         n = CmuxNotifier()
         flow = MagicMock()
         flow.request.get_content.return_value = b"set_status working"
@@ -103,6 +104,28 @@ class TestHandleStatus:
             n._handle_status(flow)
         payload = mock_send.call_args[0][0]
         assert payload == "set_status working\n"
+
+    @patch.dict("os.environ", {"CMUX_WORKSPACE_ID": "WS-123"})
+    def test_injects_tab_from_sidecar_env(self):
+        n = CmuxNotifier()
+        flow = MagicMock()
+        flow.request.get_content.return_value = b"set_status working"
+        with patch.object(n, "_send_to_proxy") as mock_send:
+            n._handle_status(flow)
+        payload = mock_send.call_args[0][0]
+        assert payload.rstrip("\n") == "set_status working --tab=WS-123"
+
+    @patch.dict("os.environ", {"CMUX_WORKSPACE_ID": "TRUSTED"})
+    def test_strips_agent_supplied_tab(self):
+        """Agent-supplied --tab=OTHER must not survive the sidecar."""
+        n = CmuxNotifier()
+        flow = MagicMock()
+        flow.request.get_content.return_value = b"set_status foo --tab=EVIL_WS"
+        with patch.object(n, "_send_to_proxy") as mock_send:
+            n._handle_status(flow)
+        payload = mock_send.call_args[0][0]
+        assert "EVIL_WS" not in payload
+        assert "--tab=TRUSTED" in payload
 
     @patch("notifier.ctx")
     def test_returns_200_on_exception(self, _mock_ctx):
@@ -116,6 +139,7 @@ class TestHandleStatus:
 class TestHandleClaudeHook:
     """Verify Claude Code hook forwarding."""
 
+    @patch.dict("os.environ", {"CMUX_WORKSPACE_ID": ""}, clear=False)
     def test_forwards_hook_as_jsonrpc(self):
         n = CmuxNotifier()
         flow = MagicMock()
@@ -130,6 +154,33 @@ class TestHandleClaudeHook:
         assert msg["params"] == {"message": "done"}
         assert msg["id"] == "claude-hook-stop"
         assert flow.response.status_code == 200
+
+    @patch.dict("os.environ", {"CMUX_WORKSPACE_ID": "WS-TRUSTED"})
+    def test_injects_workspace_into_hook_data(self):
+        """The sidecar's workspace_id must be included so stale host proxies don't route to the wrong workspace."""
+        n = CmuxNotifier()
+        flow = MagicMock()
+        flow.request.get_content.return_value = json.dumps(
+            {"event": "stop", "data": {"message": "done"}}
+        ).encode()
+        with patch.object(n, "_send_to_proxy") as mock_send:
+            n._handle_claude_hook(flow)
+        payload = mock_send.call_args[0][0]
+        msg = json.loads(payload.rstrip("\n"))
+        assert msg["params"]["workspace_id"] == "WS-TRUSTED"
+
+    @patch.dict("os.environ", {"CMUX_WORKSPACE_ID": "WS-TRUSTED"})
+    def test_overrides_agent_supplied_workspace_id(self):
+        n = CmuxNotifier()
+        flow = MagicMock()
+        flow.request.get_content.return_value = json.dumps(
+            {"event": "stop", "data": {"workspace_id": "EVIL_WS"}}
+        ).encode()
+        with patch.object(n, "_send_to_proxy") as mock_send:
+            n._handle_claude_hook(flow)
+        payload = mock_send.call_args[0][0]
+        msg = json.loads(payload.rstrip("\n"))
+        assert msg["params"]["workspace_id"] == "WS-TRUSTED"
 
     def test_missing_event_returns_400(self):
         n = CmuxNotifier()
@@ -149,16 +200,16 @@ class TestHandleClaudeHook:
         n._handle_claude_hook(flow)
         assert flow.response.status_code == 400
 
+    @patch.dict("os.environ", {"CMUX_WORKSPACE_ID": ""}, clear=False)
     def test_defaults_data_to_empty_dict(self):
         n = CmuxNotifier()
         flow = MagicMock()
-        flow.request.get_content.return_value = json.dumps(
-            {"event": "start"}
-        ).encode()
+        flow.request.get_content.return_value = json.dumps({"event": "start"}).encode()
         with patch.object(n, "_send_to_proxy") as mock_send:
             n._handle_claude_hook(flow)
         payload = mock_send.call_args[0][0]
         msg = json.loads(payload.rstrip("\n"))
+        # No workspace_id in env, so params should be empty.
         assert msg["params"] == {}
         assert flow.response.status_code == 200
 

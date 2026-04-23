@@ -85,6 +85,36 @@ class TestIsAllowed:
     def test_empty_host_not_matched(self):
         assert not _is_allowed("", ["api.example.com"])
 
+    def test_entry_without_port_matches_any_port(self):
+        assert _is_allowed("api.example.com", ["api.example.com"], port=443)
+        assert _is_allowed("api.example.com", ["api.example.com"], port=8080)
+
+    def test_entry_with_port_matches_exact_port(self):
+        assert _is_allowed("host.docker.internal", ["host.docker.internal:11434"], port=11434)
+
+    def test_entry_with_port_rejects_other_ports(self):
+        assert not _is_allowed("host.docker.internal", ["host.docker.internal:11434"], port=5432)
+        assert not _is_allowed("host.docker.internal", ["host.docker.internal:11434"], port=22)
+
+    def test_wildcard_with_port(self):
+        assert _is_allowed("api.example.com", ["*.example.com:443"], port=443)
+        assert not _is_allowed("api.example.com", ["*.example.com:443"], port=80)
+
+    def test_multiple_port_entries_for_same_host(self):
+        allowlist = ["host.docker.internal:11434", "host.docker.internal:5432"]
+        assert _is_allowed("host.docker.internal", allowlist, port=11434)
+        assert _is_allowed("host.docker.internal", allowlist, port=5432)
+        assert not _is_allowed("host.docker.internal", allowlist, port=22)
+
+    def test_port_none_matches_entry_without_port(self):
+        """When caller doesn't supply a port, entries without ports still match."""
+        assert _is_allowed("api.example.com", ["api.example.com"], port=None)
+
+    def test_port_none_matches_entry_with_port(self):
+        """When caller doesn't supply a port, port-specific entries still match the host."""
+        # This is a fallback — callers should always supply a port, but don't break if not.
+        assert _is_allowed("api.example.com", ["api.example.com:443"], port=None)
+
 
 class TestLoadAllowlistEdgeCases:
     """Additional edge case tests for _load_allowlist()."""
@@ -123,6 +153,59 @@ class TestLoadAllowlistEdgeCases:
         policy.write_text("allowed:\n  - 12345\n")
         result = _load_allowlist(policy)
         assert "12345" in result
+
+    def test_accepts_host_port_entry(self, tmp_path):
+        policy = tmp_path / "port.yml"
+        policy.write_text("allowed:\n  - host.docker.internal:11434\n")
+        result = _load_allowlist(policy)
+        assert "host.docker.internal:11434" in result
+
+    def test_accepts_wildcard_with_port(self, tmp_path):
+        policy = tmp_path / "port.yml"
+        policy.write_text("allowed:\n  - '*.example.com:443'\n")
+        result = _load_allowlist(policy)
+        assert "*.example.com:443" in result
+
+    def test_rejects_invalid_port(self, tmp_path):
+        policy = tmp_path / "port.yml"
+        policy.write_text("allowed:\n  - host.docker.internal:99999\n  - good.com\n")
+        result = _load_allowlist(policy)
+        assert "host.docker.internal:99999" not in result
+        assert "good.com" in result
+
+    def test_rejects_non_numeric_port(self, tmp_path):
+        policy = tmp_path / "port.yml"
+        policy.write_text("allowed:\n  - host.docker.internal:abc\n  - good.com\n")
+        result = _load_allowlist(policy)
+        assert "host.docker.internal:abc" not in result
+        assert "good.com" in result
+
+    def test_bracketed_ipv6_with_port(self, tmp_path):
+        policy = tmp_path / "ipv6.yml"
+        policy.write_text("allowed:\n  - '[::1]:8080'\n")
+        result = _load_allowlist(policy)
+        assert "[::1]:8080" in result
+
+    def test_bracketed_ipv6_matches_unbracketed_host(self):
+        """mitmproxy returns unbracketed IPv6 (::1), so our policy brackets
+        must be stripped when matching."""
+        # Policy entry: [::1]:8080 → host "::1" port 8080
+        assert _is_allowed("::1", ["[::1]:8080"], port=8080)
+        assert not _is_allowed("::1", ["[::1]:8080"], port=9090)
+
+    def test_bare_ipv6_does_not_misparse_as_host_port(self, tmp_path):
+        """Bare IPv6 addresses must not be silently reinterpreted as host:port.
+
+        Prior behavior: `::1` would rsplit to (':', 1) and be treated as a
+        host+port combo with port 1. Now bare IPv6 is stored as-is and
+        won't accidentally match an unrelated host on port 1.
+        """
+        policy = tmp_path / "ipv6.yml"
+        policy.write_text("allowed:\n  - '::1'\n")
+        result = _load_allowlist(policy)
+        # Either accepted unchanged or rejected — never reinterpreted.
+        for entry in result:
+            assert not entry.endswith(":1") or entry == "::1"
 
 
 class TestEnforcerClass:

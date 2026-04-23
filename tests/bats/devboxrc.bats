@@ -204,3 +204,45 @@ teardown() {
     [ "$DEVBOX_RELOAD_INTERVAL" = "30" ]
     rm -rf "$tmpdir"
 }
+
+@test "load_devboxrc accepts valid DEVBOX_VOLATILE_DIRS" {
+    local tmpdir
+    tmpdir="$(mktemp -d)"
+    echo 'DEVBOX_VOLATILE_DIRS=node_modules,dist,.next' >"${tmpdir}/.devboxrc"
+    unset DEVBOX_VOLATILE_DIRS
+    _load_devboxrc "$tmpdir"
+    [ "$DEVBOX_VOLATILE_DIRS" = "node_modules,dist,.next" ]
+    rm -rf "$tmpdir"
+}
+
+@test "load_devboxrc rejects reserved volatile dirs" {
+    local tmpdir
+    tmpdir="$(mktemp -d)"
+    echo 'DEVBOX_VOLATILE_DIRS=node_modules,.git,dist' >"${tmpdir}/.devboxrc"
+    unset DEVBOX_VOLATILE_DIRS
+    _load_devboxrc "$tmpdir"
+    # .git filtered out; others kept.
+    [ "$DEVBOX_VOLATILE_DIRS" = "node_modules,dist" ]
+    rm -rf "$tmpdir"
+}
+
+@test "load_devboxrc rejects dot-dot volatile dir" {
+    local tmpdir
+    tmpdir="$(mktemp -d)"
+    echo 'DEVBOX_VOLATILE_DIRS=..' >"${tmpdir}/.devboxrc"
+    unset DEVBOX_VOLATILE_DIRS
+    _load_devboxrc "$tmpdir"
+    # Should skip entirely (no valid entries).
+    [ -z "${DEVBOX_VOLATILE_DIRS:-}" ]
+    rm -rf "$tmpdir"
+}
+
+@test "load_devboxrc rejects volatile dirs with slashes" {
+    local tmpdir
+    tmpdir="$(mktemp -d)"
+    echo 'DEVBOX_VOLATILE_DIRS=../etc/passwd' >"${tmpdir}/.devboxrc"
+    unset DEVBOX_VOLATILE_DIRS
+    _load_devboxrc "$tmpdir"
+    [ -z "${DEVBOX_VOLATILE_DIRS:-}" ]
+    rm -rf "$tmpdir"
+}

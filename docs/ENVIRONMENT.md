@@ -16,7 +16,7 @@ All environment variables used by devbox.
 | `DEVBOX_NAME` | *(basename of project path)* | Override default project name |
 | `DEVBOX_CREDENTIAL_INJECTION` | `true` | Enable/disable proxy credential injection |
 | `DEVBOX_QUIET` | *(unset)* | Set to `1` for quiet mode (suppress info output) |
-| `DEVBOX_NO_SECRETS` | *(unset)* | Set to `1` to start without API keys configured |
+| `DEVBOX_VOLATILE_DIRS` | *(unset)* | Comma-separated directory names to isolate as platform-specific volumes (e.g. `node_modules,dist,.next`) |
 
 ## Injected into Container (via docker-compose.yml)
 

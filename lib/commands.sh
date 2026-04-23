@@ -17,7 +17,7 @@ _load_devboxrc() {
     local rc_file="${1:-.}/.devboxrc"
     [ -f "$rc_file" ] || return 0
 
-    local allowed_vars="DEVBOX_BRIDGE_SUBNET DEVBOX_RELOAD_INTERVAL DEVBOX_PRIVATE_CONFIGS DEVBOX_MEMORY DEVBOX_CPUS DEVBOX_NAME DEVBOX_CREDENTIAL_INJECTION"
+    local allowed_vars="DEVBOX_BRIDGE_SUBNET DEVBOX_RELOAD_INTERVAL DEVBOX_PRIVATE_CONFIGS DEVBOX_MEMORY DEVBOX_CPUS DEVBOX_NAME DEVBOX_CREDENTIAL_INJECTION DEVBOX_VOLATILE_DIRS"
     local line_num=0
     while IFS= read -r line || [ -n "$line" ]; do
         line_num=$((line_num + 1))
@@ -94,6 +94,36 @@ _load_devboxrc() {
                     ui_warn ".devboxrc:${line_num}: '${key}' must be 'true' or 'false', skipping"
                     continue
                 fi
+                ;;
+            DEVBOX_VOLATILE_DIRS)
+                # Comma-separated directory names. Each must match [a-zA-Z0-9._-]+
+                # and not be in the reserved list. Shadowing .git/.ssh/etc would
+                # break tooling or hide sensitive files inside the container.
+                local valid_dirs=()
+                local reserved_vdirs=(".git" ".ssh" ".aws" ".gnupg" ".docker" ".kube" "." "..")
+                for vdir in ${value//,/ }; do
+                    vdir="${vdir#"${vdir%%[![:space:]]*}"}"  # trim leading whitespace
+                    vdir="${vdir%"${vdir##*[![:space:]]}"}"  # trim trailing whitespace
+                    [ -z "$vdir" ] && continue
+                    if [[ ! "$vdir" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+                        ui_warn ".devboxrc:${line_num}: '${key}' entry '${vdir}' is not a valid directory name, skipping entry"
+                        continue
+                    fi
+                    local reserved=false
+                    for r in "${reserved_vdirs[@]}"; do
+                        [ "$vdir" = "$r" ] && { reserved=true; break; }
+                    done
+                    if $reserved; then
+                        ui_warn ".devboxrc:${line_num}: '${key}' entry '${vdir}' is reserved (would shadow critical files), skipping entry"
+                        continue
+                    fi
+                    valid_dirs+=("$vdir")
+                done
+                if [ ${#valid_dirs[@]} -eq 0 ]; then
+                    ui_warn ".devboxrc:${line_num}: '${key}' has no valid entries, skipping"
+                    continue
+                fi
+                value="$(IFS=,; echo "${valid_dirs[*]}")"
                 ;;
         esac
         # Export only if not already set (env takes precedence over file).
@@ -439,7 +469,7 @@ cmd_stop() {
             docker compose $(_compose_file_args) -p "$project" down
             ui_info "Stopped: ${name}"
         done <<<"$projects"
-        _cmux_proxy_stop
+        _cmux_proxy_unload
         return 0
     fi
 
@@ -461,7 +491,10 @@ cmd_stop() {
     fi
     _export_compose_env "$project"
     docker compose $(_compose_file_args) -p "$project" down
-    _cmux_proxy_stop
+    # Unload cmux proxy if this was the last session.
+    local remaining
+    remaining="$(_find_devbox_projects)"
+    [ -z "$remaining" ] && _cmux_proxy_unload
     ui_info "Container stack stopped."
 }
 
@@ -785,6 +818,7 @@ cmd_clean() {
             fi
             ui_warn "This will delete ALL project data, logs, and API keys in ${DEVBOX_DATA}/"
             if ui_confirm "Delete all devbox data including secrets?"; then
+                _cmux_proxy_unload
                 rm -rf "${DEVBOX_DATA}"
                 ui_info "All devbox data removed."
             fi
@@ -1008,7 +1042,6 @@ FLAGS:
 
 ENVIRONMENT:
   DEVBOX_QUIET             Set to 1 for quiet mode (same as --quiet)
-  DEVBOX_NO_SECRETS        Set to 1 to start without API keys configured
   DEVBOX_DATA              Data directory (default: ~/.devbox)
   DEVBOX_CONFIG            Config directory (default: ~/.config/devbox)
   DEVBOX_MEMORY            Agent container memory limit (default: 8G)

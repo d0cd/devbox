@@ -17,6 +17,29 @@ setup() {
     _validate_domain "*.example.com"
 }
 
+@test "validate_domain accepts host:port" {
+    _validate_domain "host.docker.internal:11434"
+}
+
+@test "validate_domain accepts wildcard with port" {
+    _validate_domain "*.example.com:443"
+}
+
+@test "validate_domain rejects port out of range" {
+    run _validate_domain "example.com:99999"
+    [ "$status" -ne 0 ]
+}
+
+@test "validate_domain rejects non-numeric port" {
+    run _validate_domain "example.com:abc"
+    [ "$status" -ne 0 ]
+}
+
+@test "validate_domain rejects zero port" {
+    run _validate_domain "example.com:0"
+    [ "$status" -ne 0 ]
+}
+
 @test "validate_domain accepts subdomain" {
     _validate_domain "api.sub.example.com"
 }

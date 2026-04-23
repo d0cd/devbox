@@ -1,12 +1,21 @@
 """
 mitmproxy addon: domain allowlist enforcer.
 
-Reads a YAML policy file and blocks HTTP/HTTPS requests to domains not
-in the allowlist. Only exact matches and *. prefix wildcards are supported
-to prevent accidental over-matching.
+Reads a YAML policy file and blocks HTTP/HTTPS requests to destinations
+not in the allowlist. Entries match on host, and optionally on port:
+
+  api.anthropic.com              # any port
+  host.docker.internal:11434     # only port 11434 (e.g. ollama)
+  *.example.com                  # wildcard, any port
+  *.example.com:443              # wildcard, only port 443
+
+Only exact matches and *. prefix wildcards are supported to prevent
+accidental over-matching.
 
 Derived from mattolson/agent-sandbox (MIT).
 """
+
+from __future__ import annotations
 
 import logging
 import os
@@ -27,6 +36,47 @@ except ValueError:
 # Module-level logger for standalone functions (usable outside mitmproxy).
 # Addon methods use ctx.log (mitmproxy's context logger) instead.
 logger = logging.getLogger("enforcer")
+
+
+def _split_entry(pattern: str) -> tuple[str, int | None]:
+    """Split a policy entry into (host_pattern, port_or_none).
+
+    Handles three syntaxes:
+      hostname          — any port
+      hostname:port     — specific port
+      [ipv6]:port       — bracketed IPv6 with port (brackets stripped to
+                          match mitmproxy's pretty_host, which is unbracketed)
+
+    Unbracketed addresses containing multiple colons (bare IPv6 without
+    a port) are returned unchanged.
+    """
+    # Bracketed IPv6: [::1] or [::1]:8080 — strip brackets so the host part
+    # matches mitmproxy's pretty_host, which has no brackets.
+    if pattern.startswith("["):
+        end = pattern.find("]")
+        if end != -1:
+            host_part = pattern[1:end]  # strip brackets
+            tail = pattern[end + 1 :]
+            if tail.startswith(":"):
+                port_str = tail[1:]
+                if port_str.isdigit():
+                    return host_part, int(port_str)
+            return host_part, None
+    # Only treat as host:port if there's exactly one colon (avoids
+    # misinterpreting bare IPv6 as host:port).
+    if pattern.count(":") == 1:
+        host_part, port_str = pattern.split(":", 1)
+        if port_str.isdigit():
+            return host_part, int(port_str)
+    return pattern, None
+
+
+def _host_matches(host: str, host_pattern: str) -> bool:
+    """Match host against an exact or *.-wildcard pattern."""
+    if host_pattern.startswith("*."):
+        base = host_pattern[2:]
+        return host == base or host.endswith("." + base)
+    return host == host_pattern
 
 
 def _load_allowlist(path: Path) -> list[str]:
@@ -61,32 +111,46 @@ def _load_allowlist(path: Path) -> list[str]:
     entries = []
     for domain in allowed:
         d = str(domain).lower().strip()
-        # Only allow exact domains and *. prefix wildcards.
         if not d:
             continue
-        if d.count("*") > 1 or ("*" in d and not d.startswith("*.")):
+        # Reject entries that look like host:port but have a non-numeric port.
+        # Bracketed IPv6 with port is handled below via _split_entry.
+        if not d.startswith("[") and d.count(":") == 1:
+            _, port_str = d.split(":", 1)
+            if not port_str.isdigit():
+                logger.warning("Ignoring entry with invalid port: %s", d)
+                continue
+        host_part, port = _split_entry(d)
+        # Reject unsupported wildcard syntaxes (only *. prefix is allowed).
+        if host_part.count("*") > 1 or ("*" in host_part and not host_part.startswith("*.")):
             logger.warning("Ignoring unsupported wildcard pattern: %s", d)
+            continue
+        # Reject out-of-range ports.
+        if port is not None and not (0 < port < 65536):
+            logger.warning("Ignoring entry with invalid port: %s", d)
             continue
         entries.append(d)
 
     return entries
 
 
-def _is_allowed(host: str, allowlist: list[str]) -> bool:
-    """Check if a host matches any entry in the allowlist.
+def _is_allowed(host: str, allowlist: list[str], port: int | None = None) -> bool:
+    """Check if a host[:port] matches any entry in the allowlist.
 
     Supports exact matches and *. prefix wildcards (e.g. *.example.com
     matches sub.example.com and example.com itself).
+
+    Entries without a port match any port (backwards compatible).
+    Entries with a port match only that port.
     """
     host = host.lower()
     for pattern in allowlist:
-        if pattern.startswith("*."):
-            # Wildcard: match the base domain and any subdomain.
-            base = pattern[2:]
-            if host == base or host.endswith("." + base):
-                return True
-        elif host == pattern:
-            return True
+        host_pattern, entry_port = _split_entry(pattern)
+        if not _host_matches(host, host_pattern):
+            continue
+        if entry_port is not None and port is not None and entry_port != port:
+            continue
+        return True
     return False
 
 
@@ -140,29 +204,31 @@ class Enforcer:
         return f"{BLOCKED_BODY_PREFIX}{safe_host}{BLOCKED_BODY_SUFFIX}".encode()
 
     def request(self, flow: http.HTTPFlow) -> None:
-        """Block HTTP requests to non-allowed domains."""
+        """Block HTTP requests to non-allowed host:port combinations."""
         # Skip /_devbox/ internal endpoints — handled by the notifier addon.
         if flow.request.path.startswith("/_devbox/"):
             return
         self._maybe_reload()
         host = flow.request.pretty_host
-        if not _is_allowed(host, self.allowlist):
-            ctx.log.warn(f"[enforcer] BLOCKED {flow.request.method} {host}")
+        port = flow.request.port
+        if not _is_allowed(host, self.allowlist, port):
+            ctx.log.warn(f"[enforcer] BLOCKED {flow.request.method} {host}:{port}")
             flow.response = http.Response.make(
                 403,
-                self._blocked_body(host),
+                self._blocked_body(f"{host}:{port}"),
                 {"Content-Type": "text/plain"},
             )
 
     def http_connect(self, flow: http.HTTPFlow) -> None:
-        """Block HTTPS CONNECT tunnels to non-allowed domains."""
+        """Block HTTPS CONNECT tunnels to non-allowed host:port combinations."""
         self._maybe_reload()
         host = flow.request.pretty_host
-        if not _is_allowed(host, self.allowlist):
-            ctx.log.warn(f"[enforcer] BLOCKED CONNECT {host}")
+        port = flow.request.port
+        if not _is_allowed(host, self.allowlist, port):
+            ctx.log.warn(f"[enforcer] BLOCKED CONNECT {host}:{port}")
             flow.response = http.Response.make(
                 403,
-                self._blocked_body(host),
+                self._blocked_body(f"{host}:{port}"),
                 {"Content-Type": "text/plain"},
             )
 

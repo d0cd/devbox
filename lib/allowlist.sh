@@ -6,13 +6,24 @@
 set -euo pipefail
 
 # Validate a domain string. Returns 0 if valid, 1 if not.
+# Accepts: domain, *.domain wildcard, optional :port suffix (1-65535).
 _validate_domain() {
-    local domain="$1"
-    # Allow exact domains or *. prefix wildcards only.
-    if [[ "$domain" =~ ^(\*\.)?[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$ ]]; then
+    local entry="$1"
+    local host="$entry"
+    local port=""
+    # Split off :port suffix if present.
+    if [[ "$entry" == *:* ]]; then
+        host="${entry%:*}"
+        port="${entry##*:}"
+        if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+            ui_error "Invalid port in '$entry' (must be 1-65535)"
+            return 1
+        fi
+    fi
+    if [[ "$host" =~ ^(\*\.)?[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$ ]]; then
         return 0
     fi
-    ui_error "Invalid domain: '$domain' (must be a domain name or *.domain wildcard)"
+    ui_error "Invalid entry: '$entry' (must be domain, *.domain, or domain:port)"
     return 1
 }
 

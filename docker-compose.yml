@@ -87,6 +87,10 @@ services:
       dockerfile: Dockerfile
     environment:
       DEVBOX_CMUX_PROXY_PORT: ${DEVBOX_CMUX_PROXY_PORT:-}
+      # Bound to the cmux workspace the user was in at `devbox start` time.
+      # Used by notifier.py to tag outgoing cmux commands with the session's
+      # workspace — not the (possibly stale) workspace the host proxy knows.
+      CMUX_WORKSPACE_ID: ${CMUX_WORKSPACE_ID:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:

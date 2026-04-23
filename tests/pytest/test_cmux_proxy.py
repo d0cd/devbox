@@ -132,7 +132,7 @@ class TestSafeCmuxId:
     @pytest.mark.parametrize(
         "value",
         [
-            "755810AA-4CF5-443A-805E-AA28EC4A0618",  # UUID
+            "00000000-0000-0000-0000-000000000000",  # UUID
             "workspace:2",                            # Short ref
             "abc_def-123",
             "A1B2",

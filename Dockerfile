@@ -2,7 +2,7 @@
 # Two-stage build: builder installs toolchains, runtime copies only artifacts.
 
 # --- Stage 1: Builder ---
-FROM ubuntu:24.04@sha256:d1e2e92c075e5ca139d51a140fff46f84315c0fdce203eab2807c7e495eff4f9 AS builder
+FROM ubuntu:26.04@sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e5718d46ff64 AS builder
 
 # Prevent interactive prompts during package installation.
 ENV DEBIAN_FRONTEND=noninteractive
@@ -65,7 +65,7 @@ RUN git clone --depth=1 https://github.com/ohmyzsh/ohmyzsh.git /root/.oh-my-zsh 
         /root/.oh-my-zsh/custom/plugins/zsh-autosuggestions
 
 # --- Stage 2: Runtime ---
-FROM ubuntu:24.04@sha256:d1e2e92c075e5ca139d51a140fff46f84315c0fdce203eab2807c7e495eff4f9
+FROM ubuntu:26.04@sha256:f3d28607ddd78734bb7f71f117f3c6706c666b8b76cbff7c9ff6e5718d46ff64
 
 ARG DEVBOX_VERSION=0.3.0
 LABEL org.opencontainers.image.title="devbox-agent" \
